@@ -9,7 +9,7 @@ pip install -e .
 ```
 
 ### Useful Links ###
-Example use case: https://github.com/ziwenzhuang/parkour/tree/master/legged_gym  
+Example use case: https://github.com/ziwenzhuang/parkour/tree/main/legged_gym  
 Project website: https://robot-parkour.github.io
 
 **Maintainer**: Ziwen Zhuang    

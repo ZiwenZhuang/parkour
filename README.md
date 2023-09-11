@@ -1,17 +1,17 @@
 # Robot Parkour Learning #
-
-**Project website**: [https://robot-parkour.github.io/](https://robot-parkour.github.io/)
+Project website: [https://robot-parkour.github.io/](https://robot-parkour.github.io/) <br>
+Core Team: 
+[Ziwen Zhuang*](https://ziwenzhuang.github.io/),
+[Zipeng Fu*](https://zipengfu.github.io/),
+[Chelsea Finn](https://ai.stanford.edu/~cbfinn/),
+[Hang Zhao](https://hangzhaomit.github.io/)<br>
+Conference on Robot Learning (CoRL) 2023, Oral <br>
 
 <p align="center">
   <img src="images/teaser.jpeg" width="80%"/>
 </p>
 
-This codebase is contains implementation for training and visualizing the result of paper [Robot Parkour Learning](https://openreview.net/forum?id=uo937r5eTE)
-
-To install and run the code, please clone this repository and follow the instructions in [legged_gym/README.md](legged_gym/README.md)
-
 ## Repository Structure ##
-
 * `legged_gym`: contains the isaacgym environment and config files.
     - `legged_gym/legged_gym/envs/a1/`: contains all the training config files.
     - `legged_gym/legged_gym/envs/base/`: contains all the environment implementation.
@@ -19,29 +19,29 @@ To install and run the code, please clone this repository and follow the instruc
 * `rsl_rl`: contains the network module and algorithm implementation. You can copy this folder directly to your robot.
     - `rsl_rl/rsl_rl/algorithms/`: contains the algorithm implementation.
     - `rsl_rl/rsl_rl/modules/`: contains the network module implementation.
+ 
+## Training in Simulation ##
+To install and run the code for training A1 in simulation, please clone this repository and follow the instructions in  [legged_gym/README.md](legged_gym/README.md).
+
+## Hardware Deployment ##
+TODO
 
 ## Trouble Shooting ##
-
 If you cannot run the distillation part or all graphics computing goes to GPU 0 dispite you have multiple GPUs and have set the CUDA_VISIBLE_DEVICES, please use docker to isolate each GPU.
 
-## To Do ##
-
-The code is currently only for training and visualizing in simulation.
-
-The code and instructions for real robot is on the way.
-
-**Before November 2023, the code for real robot (A1 and Go1) and the checkpoint will be released.**
+## To Do (will be done before Nov 2023) ##
+- [ ] Go1 training pipeline in simulation
+- [ ] A1 deployment code
+- [ ] Go1 deployment code
 
 ## Citation ##
-If you find this code useful in your research, please consider citing:
-
+If you find this project helpful to your research, please consider cite us! This is really important to us. 
 ```
 @inproceedings{
     zhuang2023robot,
     title={Robot Parkour Learning},
     author={Ziwen Zhuang and Zipeng Fu and Jianren Wang and Christopher G Atkeson and S{\"o}ren Schwertfeger and Chelsea Finn and Hang Zhao},
-    booktitle={7th Annual Conference on Robot Learning},
-    year={2023},
-    url={https://openreview.net/forum?id=uo937r5eTE}
+    booktitle={Conference on Robot Learning {CoRL}},
+    year={2023}
 }
 ```

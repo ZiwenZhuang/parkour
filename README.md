@@ -1,14 +1,13 @@
 # Robot Parkour Learning #
 Project website: [https://robot-parkour.github.io/](https://robot-parkour.github.io/) <br>
-Core Team: 
+Authors: 
 [Ziwen Zhuang*](https://ziwenzhuang.github.io/),
 [Zipeng Fu*](https://zipengfu.github.io/),
-[Chelsea Finn](https://ai.stanford.edu/~cbfinn/),
-[Hang Zhao](https://hangzhaomit.github.io/)<br>
-with:
 [Jianren Wang](https://www.jianrenw.com),
 [Christopher Atkeson](http://www.cs.cmu.edu/~cga/),
-[Sören Schwertfeger](https://robotics.shanghaitech.edu.cn/people/soeren)<br>
+[Sören Schwertfeger](https://robotics.shanghaitech.edu.cn/people/soeren),
+[Chelsea Finn](https://ai.stanford.edu/~cbfinn/),
+[Hang Zhao](https://hangzhaomit.github.io/)<br>
 Conference on Robot Learning (CoRL) 2023, Oral <br>
 
 <p align="center">

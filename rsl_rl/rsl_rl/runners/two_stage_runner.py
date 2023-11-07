@@ -12,6 +12,7 @@ class TwoStageRunner(OnPolicyRunner):
 
         # load some configs and their default values
         self.pretrain_iterations = self.cfg.get("pretrain_iterations", 0)
+        self.log_interval = self.cfg.get("log_interval", 50)
         assert "pretrain_dataset" in self.cfg, "pretrain_dataset is not defined in the runner cfg object"
         self.rollout_dataset = RolloutDataset(
             **self.cfg["pretrain_dataset"],

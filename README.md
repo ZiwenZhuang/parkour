@@ -27,7 +27,8 @@ Conference on Robot Learning (CoRL) 2023, Oral <br>
 To install and run the code for training A1 in simulation, please clone this repository and follow the instructions in  [legged_gym/README.md](legged_gym/README.md).
 
 ## Hardware Deployment ##
-TODO
+To deploy the trained model on your real robot, please follow the instructions in [Deploy.md](Deploy.md).
+
 
 ## Trouble Shooting ##
 If you cannot run the distillation part or all graphics computing goes to GPU 0 dispite you have multiple GPUs and have set the CUDA_VISIBLE_DEVICES, please use docker to isolate each GPU.
@@ -35,7 +36,7 @@ If you cannot run the distillation part or all graphics computing goes to GPU 0 
 ## To Do (will be done before Nov 2023) ##
 - [ ] Go1 training pipeline in simulation
 - [ ] A1 deployment code
-- [ ] Go1 deployment code
+- [x] Go1 deployment code
 
 ## Citation ##
 If you find this project helpful to your research, please consider cite us! This is really important to us. 

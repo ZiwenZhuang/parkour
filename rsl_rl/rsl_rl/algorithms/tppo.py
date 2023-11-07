@@ -164,6 +164,12 @@ class TPPO(PPO):
                 self.actor_critic.action_mean - minibatch.action_labels,
                 dim= -1
             )
+        elif self.distill_target == "l1":
+            dist_loss = torch.norm(
+                self.actor_critic.action_mean - minibatch.action_labels,
+                dim= -1,
+                p= 1,
+            )
         elif self.distill_target == "tanh":
             # for tanh, similar to loss function for sigmoid, refer to https://stats.stackexchange.com/questions/12754/matching-loss-function-for-tanh-units-in-a-neural-net
             dist_loss = F.binary_cross_entropy(

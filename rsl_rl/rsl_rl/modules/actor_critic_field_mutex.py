@@ -15,6 +15,8 @@ class ActorCriticFieldMutex(ActorCriticMutex):
     def __init__(self,
             *args,
             cmd_vel_mapping = dict(),
+            reset_non_selected = "all",
+            action_smoothing_buffer_len = 1,
             **kwargs,
         ):
         """ NOTE: This implementation only supports subpolicy output to (-1., 1.) range.
@@ -24,6 +26,9 @@ class ActorCriticFieldMutex(ActorCriticMutex):
         """
         super().__init__(*args, **kwargs)
         self.cmd_vel_mapping = cmd_vel_mapping
+        self.reset_non_selected = reset_non_selected
+        self.action_smoothing_buffer_len = action_smoothing_buffer_len
+        self.action_smoothing_buffer = None
 
         # load cmd_scale to assign the cmd_vel during overriding
         self.cmd_scales = []
@@ -101,18 +106,33 @@ class ActorCriticFieldMutex(ActorCriticMutex):
     def act_inference(self, observations):
         # run entire batch for each sub policy in case the batch size and length problem.
         policy_selection = self.get_policy_selection(observations)
+        if self.action_smoothing_buffer is None:
+            self.action_smoothing_buffer = torch.zeros(
+                self.action_smoothing_buffer_len,
+                *policy_selection.shape,
+                device= policy_selection.device,
+                dtype= torch.float,
+            ) # (len, N, ..., selection)
+        self.action_smoothing_buffer = torch.cat([
+            self.action_smoothing_buffer[1:],
+            policy_selection.unsqueeze(0),
+        ], dim= 0) # put the new one at the end
         observations = self.recover_last_action(observations, policy_selection)
         if self.cmd_vel_mapping:
             observations = self.override_cmd_vel(observations, policy_selection)
         outputs = [p.act_inference(observations) for p in self.submodules]
-        output = torch.empty_like(outputs[0])
+        output = torch.zeros_like(outputs[0])
         for idx, out in enumerate(outputs):
-            output[policy_selection[..., idx]] = torch.clip(
-                out[policy_selection[..., idx]] * getattr(self, "subpolicy_action_scale_{:d}".format(idx)) / self.env_action_scale,
-                -1., 1.,
-            )
+            output += out * getattr(self, "subpolicy_action_scale_{:d}".format(idx)) / self.env_action_scale \
+                 * self.action_smoothing_buffer[..., idx].mean(dim= 0).unsqueeze(-1)
             # choose one or none reset method
-            self.submodules[idx].reset(~policy_selection[..., idx])
+            if self.reset_non_selected == "all" or self.reset_non_selected == True:
+                self.submodules[idx].reset(self.action_smoothing_buffer[..., idx].sum(0) == 0)
+            elif self.reset_non_selected == "when_skill" and idx > 0:
+                self.submodules[idx].reset(torch.logical_and(
+                    ~policy_selection[..., idx],
+                    ~policy_selection[..., 0],
+                ))
             # self.submodules[idx].reset(torch.ones(observations.shape[0], dtype= bool, device= observations.device))
         return output
     
@@ -122,16 +142,18 @@ class ActorCriticFieldMutex(ActorCriticMutex):
         return super().reset(dones)
     
 class ActorCriticClimbMutex(ActorCriticFieldMutex):
-    """ A variant to handle climb-up and climb-down with seperate policies
-    Climb-down policy will be the last submodule in the list
+    """ A variant to handle jump-up and jump-down with seperate policies
+    Jump-down policy will be the last submodule in the list
     """
     JUMP_OBSTACLE_ID = 3 # starting from 0, referring to barrker_track.py:BarrierTrack.track_options_id_dict
     def __init__(self,
             *args,
             sub_policy_paths: list = None,
-            climb_down_policy_path: str = None,
+            jump_down_policy_path: str = None,
+            jump_down_vel: float = None, # can be tuple/list, use it to stop using jump up velocity command
             **kwargs,):
-        sub_policy_paths = sub_policy_paths + [climb_down_policy_path]
+        sub_policy_paths = sub_policy_paths + [jump_down_policy_path]
+        self.jump_down_vel = jump_down_vel
         super().__init__(
             *args,
             sub_policy_paths= sub_policy_paths,
@@ -140,23 +162,28 @@ class ActorCriticClimbMutex(ActorCriticFieldMutex):
 
     def resample_cmd_vel_current(self, dones=None):
         return_ = super().resample_cmd_vel_current(dones)
-        self.cmd_vel_current[len(self.submodules) - 1] = self.cmd_vel_current[self.JUMP_OBSTACLE_ID]
+        if self.jump_down_vel is None:
+            self.cmd_vel_current[len(self.submodules) - 1] = self.cmd_vel_current[self.JUMP_OBSTACLE_ID]
+        elif isinstance(self.jump_down_vel, (tuple, list)):
+            self.cmd_vel_current[len(self.submodules) - 1] = np.random.uniform(*self.jump_down_vel)
+        else:
+            self.cmd_vel_current[len(self.submodules) - 1] = self.jump_down_vel
         return return_
 
     def get_policy_selection(self, observations):
         obstacle_id_onehot = super().get_policy_selection(observations)
         obs_slice = get_obs_slice(self.obs_segments, "engaging_block")
         engaging_block_obs = observations[..., obs_slice[0]].reshape(*observations.shape[:-1], *obs_slice[1])
-        climb_up_mask = engaging_block_obs[..., -1] > 0 # climb-up or climb-down
+        jump_up_mask = engaging_block_obs[..., -1] > 0 # jump-up or jump-down
         obstacle_id_onehot = torch.cat([
             obstacle_id_onehot,
             torch.logical_and(
                 obstacle_id_onehot[..., self.JUMP_OBSTACLE_ID],
-                torch.logical_not(climb_up_mask),
+                torch.logical_not(jump_up_mask),
             ).unsqueeze(-1)
         ], dim= -1)
         obstacle_id_onehot[..., self.JUMP_OBSTACLE_ID] = torch.logical_and(
             obstacle_id_onehot[..., self.JUMP_OBSTACLE_ID],
-            climb_up_mask,
+            jump_up_mask,
         )
         return obstacle_id_onehot.to(torch.bool) # (N, ..., selection)

@@ -76,6 +76,7 @@ class OnPolicyRunner:
         self.tot_timesteps = 0
         self.tot_time = 0
         self.current_learning_iteration = 0
+        self.log_interval = self.cfg.get("log_interval", 1)
 
         _, _ = self.env.reset()
     
@@ -130,7 +131,7 @@ class OnPolicyRunner:
             losses, stats = self.alg.update(self.current_learning_iteration)
             stop = time.time()
             learn_time = stop - start
-            if self.log_dir is not None:
+            if self.log_dir is not None and self.current_learning_iteration % self.log_interval == 0:
                 self.log(locals())
             if self.current_learning_iteration % self.save_interval == 0 and self.current_learning_iteration > start_iter:
                 self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
@@ -238,7 +239,7 @@ class OnPolicyRunner:
     def load(self, path, load_optimizer=True):
         loaded_dict = torch.load(path)
         self.alg.actor_critic.load_state_dict(loaded_dict['model_state_dict'])
-        if load_optimizer:
+        if load_optimizer and "optimizer_state_dict" in loaded_dict:
             self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict'])
         if "lr_scheduler_state_dict" in loaded_dict:
             if not hasattr(self.alg, "lr_scheduler"):

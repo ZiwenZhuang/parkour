@@ -62,11 +62,27 @@ task_registry.register( "go1_field", LeggedRobotNoisy, Go1FieldCfg(), Go1FieldCf
 task_registry.register( "go1_distill", LeggedRobotNoisy, Go1FieldDistillCfg(), Go1FieldDistillCfgPPO())
 
 ## The following tasks are for the convinience of opensource
-from .a1.a1_climb_config import A1ClimbCfg, A1ClimbCfgPPO
-task_registry.register( "a1_climb", LeggedRobotNoisy, A1ClimbCfg(), A1ClimbCfgPPO() )
+from .a1.a1_remote_config import A1RemoteCfg, A1RemoteCfgPPO
+task_registry.register( "a1_remote", LeggedRobotNoisy, A1RemoteCfg(), A1RemoteCfgPPO() )
+from .a1.a1_jump_config import A1JumpCfg, A1JumpCfgPPO
+task_registry.register( "a1_jump", LeggedRobotNoisy, A1JumpCfg(), A1JumpCfgPPO() )
+from .a1.a1_down_config import A1DownCfg, A1DownCfgPPO
+task_registry.register( "a1_down", LeggedRobotNoisy, A1DownCfg(), A1DownCfgPPO() )
 from .a1.a1_leap_config import A1LeapCfg, A1LeapCfgPPO
 task_registry.register( "a1_leap", LeggedRobotNoisy, A1LeapCfg(), A1LeapCfgPPO() )
 from .a1.a1_crawl_config import A1CrawlCfg, A1CrawlCfgPPO
 task_registry.register( "a1_crawl", LeggedRobotNoisy, A1CrawlCfg(), A1CrawlCfgPPO() )
 from .a1.a1_tilt_config import A1TiltCfg, A1TiltCfgPPO
 task_registry.register( "a1_tilt", LeggedRobotNoisy, A1TiltCfg(), A1TiltCfgPPO() )
+from .go1.go1_remote_config import Go1RemoteCfg, Go1RemoteCfgPPO
+task_registry.register( "go1_remote", LeggedRobotNoisy, Go1RemoteCfg(), Go1RemoteCfgPPO() )
+from .go1.go1_jump_config import Go1JumpCfg, Go1JumpCfgPPO
+task_registry.register( "go1_jump", LeggedRobotNoisy, Go1JumpCfg(), Go1JumpCfgPPO() )
+from .go1.go1_down_config import Go1DownCfg, Go1DownCfgPPO
+task_registry.register( "go1_down", LeggedRobotNoisy, Go1DownCfg(), Go1DownCfgPPO() )
+from .go1.go1_leap_config import Go1LeapCfg, Go1LeapCfgPPO
+task_registry.register( "go1_leap", LeggedRobotNoisy, Go1LeapCfg(), Go1LeapCfgPPO() )
+from .go1.go1_crawl_config import Go1CrawlCfg, Go1CrawlCfgPPO
+task_registry.register( "go1_crawl", LeggedRobotNoisy, Go1CrawlCfg(), Go1CrawlCfgPPO() )
+from .go1.go1_tilt_config import Go1TiltCfg, Go1TiltCfgPPO
+task_registry.register( "go1_tilt", LeggedRobotNoisy, Go1TiltCfg(), Go1TiltCfgPPO() )

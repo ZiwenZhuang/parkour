@@ -29,36 +29,34 @@ def main(args):
             update_class_from_dict(train_cfg, d, strict= True)
 
     # Some custom settings
-    env_cfg.terrain.BarrierTrack_kwargs["options"] = [
-        "tilt", # "tilt",
-        "crawl", # "crawl",
-        "climb", # "climb",
-        "climb", # "climb",
-        "leap", # "leap",
-    ]
-    ####### customized option to increase data distribution #######
+    # ####### customized option to increase data distribution #######
     action_sample_std = 0.0
     ############# some predefined options #############
     if len(env_cfg.terrain.BarrierTrack_kwargs["options"]) == 1:
-        env_cfg.terrain.BarrierTrack_kwargs["n_obstacles_per_track"] = 1
         env_cfg.terrain.num_rows = 20; env_cfg.terrain.num_cols = 30
     else: # for parkour env
         # >>> option 1
-        env_cfg.domain_rand.added_mass_range = [1.5, 3.0]
-        env_cfg.terrain.BarrierTrack_kwargs["climb_down_prob"] = 0.45
-        env_cfg.terrain.num_rows = 60; env_cfg.terrain.num_cols = 1
+        env_cfg.terrain.BarrierTrack_kwargs["track_block_length"] = 2.8
+        env_cfg.terrain.BarrierTrack_kwargs["track_width"] = 2.4
+        env_cfg.terrain.BarrierTrack_kwargs["wall_thickness"] = (0.0, 0.6)
+        env_cfg.domain_rand.init_base_pos_range["x"] = (0.4, 1.8)
+        env_cfg.terrain.num_rows = 12; env_cfg.terrain.num_cols = 10
         # >>> option 2
-        # env_cfg.terrain.BarrierTrack_kwargs["climb"]["depth"] = (0.1, 0.3)
-        # env_cfg.terrain.BarrierTrack_kwargs["climb"]["climb_down_prob"] = 0.55
-        # env_cfg.terrain.num_rows = 60; env_cfg.terrain.num_cols = 1
+        # env_cfg.terrain.BarrierTrack_kwargs["track_block_length"] = 3.
+        # env_cfg.terrain.BarrierTrack_kwargs["track_width"] = 4.0
+        # env_cfg.terrain.BarrierTrack_kwargs["wall_height"] = (-0.5, -0.2)
+        # env_cfg.terrain.BarrierTrack_kwargs["wall_thickness"] = (0.0, 1.4)
+        # env_cfg.domain_rand.init_base_pos_range["x"] = (1.6, 2.0)
+        # env_cfg.terrain.num_rows = 16; env_cfg.terrain.num_cols = 5
         # >>> option 3
+        # env_cfg.terrain.BarrierTrack_kwargs["track_block_length"] = 1.6
+        # env_cfg.terrain.BarrierTrack_kwargs["track_width"] = 2.2
+        # env_cfg.terrain.BarrierTrack_kwargs["wall_height"] = (-0.5, 0.1)
+        # env_cfg.terrain.BarrierTrack_kwargs["wall_thickness"] = (0.0, 0.5)
+        # env_cfg.domain_rand.init_base_pos_range["x"] = (0.2, 0.9)
         # env_cfg.terrain.BarrierTrack_kwargs["n_obstacles_per_track"] = 1
-        # env_cfg.terrain.BarrierTrack_kwargs["track_width"] = 1.6
-        # env_cfg.terrain.BarrierTrack_kwargs["wall_thickness"] = (0.0, 0.3)
-        # env_cfg.terrain.BarrierTrack_kwargs["track_block_length"] = 3.0
-        # env_cfg.terrain.BarrierTrack_kwargs["climb"]["depth"] = (0.5, 1.8)
-        # env_cfg.terrain.num_rows = 20; env_cfg.terrain.num_cols = 24
         # action_sample_std = 0.1
+        # env_cfg.terrain.num_rows = 22; env_cfg.terrain.num_cols = 16
         pass
     if (env_cfg.terrain.BarrierTrack_kwargs["options"][0] == "leap") and all(i  == env_cfg.terrain.BarrierTrack_kwargs["options"][0] for i in env_cfg.terrain.BarrierTrack_kwargs["options"]):
         ######### For leap, because the platform is usually higher than the ground.

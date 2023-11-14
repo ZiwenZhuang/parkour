@@ -71,6 +71,14 @@ class A1RoughCfg( LeggedRobotCfg ):
         penalize_contacts_on = ["thigh", "calf"]
         terminate_after_contacts_on = ["base"]
         self_collisions = 1 # 1 to disable, 0 to enable...bitwise filter
+        sdk_dof_range = dict( # copied from a1_const.h from unitree_legged_sdk
+            Hip_max= 0.802,
+            Hip_min=-0.802,
+            Thigh_max= 4.19,
+            Thigh_min= -1.05,
+            Calf_max= -0.916,
+            Calf_min= -2.7,
+        )
   
     class rewards( LeggedRobotCfg.rewards ):
         soft_dof_pos_limit = 0.9

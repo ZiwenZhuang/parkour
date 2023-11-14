@@ -7,13 +7,13 @@ import argparse
 def main(args):
     for data_dir in args.data_dirs:
         if osp.isfile(osp.join(data_dir, "metadata.json")):
-            shutil.move(
+            shutil.copy2(
                 osp.join(data_dir, "metadata.json"),
                 osp.join(osp.dirname(data_dir), data_dir.split("/")[-1] + ".json")
             )
             print(f"Moved metadata.json to {osp.join(osp.dirname(data_dir), data_dir.split('/')[-1] + '.json')}")
         # removing the directory
-        if osp.isdir(data_dir):
+        if osp.isdir(data_dir) and (not osp.islink(data_dir)):
             print("Removing directory: ", data_dir)
             if not args.only_files:
                 shutil.rmtree(data_dir)

@@ -8,7 +8,7 @@ Authors:
 [Sören Schwertfeger](https://robotics.shanghaitech.edu.cn/people/soeren),
 [Chelsea Finn](https://ai.stanford.edu/~cbfinn/),
 [Hang Zhao](https://hangzhaomit.github.io/)<br>
-Conference on Robot Learning (CoRL) 2023, Oral <br>
+Conference on Robot Learning (CoRL) 2023, **Oral**, **Best Systems Paper Award Finalist (top 3)** <br>
 
 <p align="center">
   <img src="images/teaser.jpeg" width="80%"/>
@@ -34,7 +34,7 @@ To deploy the trained model on your real robot, please follow the instructions i
 If you cannot run the distillation part or all graphics computing goes to GPU 0 dispite you have multiple GPUs and have set the CUDA_VISIBLE_DEVICES, please use docker to isolate each GPU.
 
 ## To Do (will be done before Nov 2023) ##
-- [ ] Go1 training pipeline in simulation
+- [x] Go1 training configuration (not from scratch)
 - [ ] A1 deployment code
 - [x] Go1 deployment code
 

@@ -96,7 +96,9 @@ class Logger:
         a.legend()
         # plot base pitch
         a = axs[0, 2]
-        if log["base_pitch"]: a.plot(time, log["base_pitch"], label='measured')
+        if log["base_pitch"]:
+            a.plot(time, log["base_pitch"], label='measured')
+            a.plot(time, [-0.75] * len(time), label= 'thresh')
         # if log["command_yaw"]: a.plot(time, log["command_yaw"], label='commanded')
         a.set(xlabel='time [s]', ylabel='base ang [rad]', title='Base pitch')
         a.legend()
@@ -113,11 +115,15 @@ class Logger:
                 a.plot(time, forces[:, i], label=f'force {i}')
         a.set(xlabel='time [s]', ylabel='Forces z [N]', title='Vertical Contact forces')
         a.legend()
-        # plot torque/vel curves
+        # # plot torque/vel curves
+        # a = axs[2, 1]
+        # if log["dof_vel"]!=[] and log["dof_torque"]!=[]: a.plot(log["dof_vel"], log["dof_torque"], 'x', label='measured')
+        # a.set(xlabel='Joint vel [rad/s]', ylabel='Joint Torque [Nm]', title='Torque/velocity curves')
+        # a.legend()
+        # plot power curves
         a = axs[2, 1]
-        if log["dof_vel"]!=[] and log["dof_torque"]!=[]: a.plot(log["dof_vel"], log["dof_torque"], 'x', label='measured')
-        a.set(xlabel='Joint vel [rad/s]', ylabel='Joint Torque [Nm]', title='Torque/velocity curves')
-        a.legend()
+        if log["power"]!=[]: a.plot(time, log["power"], label='power [W]')
+        a.set(xlabel='time [s]', ylabel='Power [W]', title='Power')
         # plot torques
         a = axs[2, 2]
         if log["dof_torque"]!=[]: a.plot(time, log["dof_torque"], label='measured')
@@ -126,20 +132,29 @@ class Logger:
         # plot rewards
         a = axs[3, 0]
         if log["max_torques"]: a.plot(time, log["max_torques"], label='max_torques')
+        if log["max_torque_motor"]: a.plot(time, log["max_torque_motor"], label='max_torque_motor')
+        if log["max_torque_leg"]: a.plot(time, log["max_torque_leg"], label='max_torque_leg')
         a.set(xlabel='time [s]', ylabel='max_torques [Nm]', title='max_torques')
-        a.legend()
+        a.legend(fontsize= 5)
         # plot customed data
         a = axs[3, 1]
         if log["student_action"]:
             a.plot(time, log["student_action"], label='s')
             a.plot(time, log["teacher_action"], label='t')
         a.legend()
-        a.set(xlabel='time [s]', ylabel='tanh', title='student/teacher action')
+        a.set(xlabel='time [s]', ylabel='value before step()', title='student/teacher action')
         a = axs[3, 2]
-        if log["teacher_action"]:
-            a.plot(time, [i-j for i, j in zip(log["student_action"], log["teacher_action"])], label='action difference')
-        a.set(xlabel='time [s]', ylabel='tanh', title='action difference')
-        a.legend()
+        a.plot(time, log["reward"], label='rewards')
+        for i in log["mark"]:
+            if i > 0:
+                a.plot(time, log["mark"], label='user mark')
+                break
+        for key in log.keys():
+            if "reward_removed_" in key:
+                a.plot(time, log[key], label= key)
+        a.set(xlabel='time [s]', ylabel='', title='rewards')
+        # a.set_ylim([-0.12, 0.1])
+        a.legend(fontsize = 5)
         plt.show()
 
     def print_rewards(self):

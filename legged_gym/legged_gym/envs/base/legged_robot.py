@@ -141,6 +141,7 @@ class LeggedRobot(BaseTask):
         self.last_actions[:] = self.actions[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
+        self.last_torques[:] = self.torques[:]
 
         if self.viewer and self.enable_viewer_sync and self.debug_viz:
             self._draw_debug_vis()
@@ -343,6 +344,7 @@ class LeggedRobot(BaseTask):
 
         # set small commands to zero
         self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+        self.commands[env_ids, 2] *= (torch.abs(self.commands[env_ids, 2]) > 0.1)
 
     def _compute_torques(self, actions):
         """ Compute torques from actions.
@@ -387,7 +389,9 @@ class LeggedRobot(BaseTask):
             )
         else:
             self.dof_pos[env_ids] = self.default_dof_pos
-        self.dof_vel[env_ids] = 0.
+        # self.dof_vel[env_ids] = 0. # history init method
+        dof_vel_range = getattr(self.cfg.domain_rand, "init_dof_vel_range", [-3., 3.])
+        self.dof_vel[env_ids] = torch.rand_like(self.dof_vel[env_ids]) * abs(dof_vel_range[1] - dof_vel_range[0]) + min(dof_vel_range)
 
         # Each env has multiple actors. So the actor index is not the same as env_id. But robot actor is always the first.
         dof_idx = env_ids * self.all_root_states.shape[0] / self.num_envs
@@ -414,16 +418,64 @@ class LeggedRobot(BaseTask):
         else:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
+        # base rotation (roll and pitch)
+        if hasattr(self.cfg.domain_rand, "init_base_rot_range"):
+            base_roll = torch_rand_float(
+                *self.cfg.domain_rand.init_base_rot_range["roll"],
+                (len(env_ids), 1),
+                device=self.device,
+            )[:, 0]
+            base_pitch = torch_rand_float(
+                *self.cfg.domain_rand.init_base_rot_range["pitch"],
+                (len(env_ids), 1),
+                device=self.device,
+            )[:, 0]
+            base_quat = quat_from_euler_xyz(base_roll, base_pitch, torch.zeros_like(base_roll))
+            self.root_states[env_ids, 3:7] = base_quat
         # base velocities
         if getattr(self.cfg.domain_rand, "init_base_vel_range", None) is None:
             base_vel_range = (-0.5, 0.5)
         else:
             base_vel_range = self.cfg.domain_rand.init_base_vel_range
-        self.root_states[env_ids, 7:13] = torch_rand_float(
-            *base_vel_range,
-            (len(env_ids), 6),
-            device=self.device,
-        ) # [7:10]: lin vel, [10:13]: ang vel
+        if isinstance(base_vel_range, (tuple, list)):
+            self.root_states[env_ids, 7:13] = torch_rand_float(
+                *base_vel_range,
+                (len(env_ids), 6),
+                device=self.device,
+            ) # [7:10]: lin vel, [10:13]: ang vel
+        elif isinstance(base_vel_range, dict):
+            self.root_states[env_ids, 7:8] = torch_rand_float(
+                *base_vel_range["x"],
+                (len(env_ids), 1),
+                device=self.device,
+            )
+            self.root_states[env_ids, 8:9] = torch_rand_float(
+                *base_vel_range["y"],
+                (len(env_ids), 1),
+                device=self.device,
+            )
+            self.root_states[env_ids, 9:10] = torch_rand_float(
+                *base_vel_range["z"],
+                (len(env_ids), 1),
+                device=self.device,
+            )
+            self.root_states[env_ids, 10:11] = torch_rand_float(
+                *base_vel_range["roll"],
+                (len(env_ids), 1),
+                device=self.device,
+            )
+            self.root_states[env_ids, 11:12] = torch_rand_float(
+                *base_vel_range["pitch"],
+                (len(env_ids), 1),
+                device=self.device,
+            )
+            self.root_states[env_ids, 12:13] = torch_rand_float(
+                *base_vel_range["yaw"],
+                (len(env_ids), 1),
+                device=self.device,
+            )
+        else:
+            raise NameError(f"Unknown base_vel_range type: {type(base_vel_range)}")
         
         # Each env has multiple actors. So the actor index is not the same as env_id. But robot actor is always the first.
         actor_idx = env_ids * self.all_root_states.shape[0] / self.num_envs
@@ -546,6 +598,7 @@ class LeggedRobot(BaseTask):
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
+        self.last_torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.commands = torch.zeros(self.num_envs, self.cfg.commands.num_commands, dtype=torch.float, device=self.device, requires_grad=False) # x vel, y vel, yaw vel, heading
         self.commands_scale = torch.tensor([self.obs_scales.lin_vel, self.obs_scales.lin_vel, self.obs_scales.ang_vel], device=self.device, requires_grad=False,) # TODO change this
         self.feet_air_time = torch.zeros(self.num_envs, self.feet_indices.shape[0], dtype=torch.float, device=self.device, requires_grad=False)
@@ -580,8 +633,11 @@ class LeggedRobot(BaseTask):
         self.default_dof_pos = self.default_dof_pos.unsqueeze(0)
 
     def _reset_buffers(self, env_ids):
+        if getattr(self.cfg.init_state, "zero_actions", False):
+            self.actions[env_ids] = 0.
         self.last_actions[env_ids] = 0.
         self.last_dof_vel[env_ids] = 0.
+        self.last_torques[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
         self.episode_length_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
@@ -902,8 +958,13 @@ class LeggedRobot(BaseTask):
         # log additional curriculum info
         if self.cfg.terrain.curriculum:
             self.extras["episode"]["terrain_level"] = torch.mean(self.terrain_levels.float())
+            if len(env_ids) > 0:
+                self.extras["episode"]["terrain_level_max"] = torch.max(self.terrain_levels[env_ids].float())
+                self.extras["episode"]["terrain_level_min"] = torch.min(self.terrain_levels[env_ids].float())
         if self.cfg.commands.curriculum:
             self.extras["episode"]["max_command_x"] = self.command_ranges["lin_vel_x"][1]
+        # log whether the episode ends by timeout or dead, or by reaching the goal
+        self.extras["episode"]["timeout_ratio"] = self.time_out_buf.float().sum() / self.reset_buf.float().sum()
         # send timeout info to the algorithm
         if self.cfg.env.send_timeouts:
             self.extras["time_outs"] = self.time_out_buf
@@ -929,6 +990,9 @@ class LeggedRobot(BaseTask):
     def _reward_torques(self):
         # Penalize torques
         return torch.sum(torch.square(self.torques), dim=1)
+
+    def _reward_delta_torques(self):
+        return torch.sum(torch.square(self.torques - self.last_torques), dim=1)
 
     def _reward_dof_vel(self):
         # Penalize dof velocities

@@ -7,6 +7,7 @@ import torch
 
 from legged_gym.envs.base.legged_robot import LeggedRobot
 from legged_gym.utils.terrain import get_terrain_cls
+from legged_gym.utils.observation import get_obs_slice
 from .legged_robot_config import LeggedRobotCfg
 
 class LeggedRobotField(LeggedRobot):
@@ -102,9 +103,33 @@ class LeggedRobotField(LeggedRobot):
                 self.cfg.normalization.clip_actions,
                 device= self.device,
             )
+        if isinstance(getattr(self.cfg.normalization, "clip_actions_low", None), (tuple, list)):
+            self.cfg.normalization.clip_actions_low = torch.tensor(
+                self.cfg.normalization.clip_actions_low,
+                device= self.device
+            )
+        if isinstance(getattr(self.cfg.normalization, "clip_actions_high", None), (tuple, list)):
+            self.cfg.normalization.clip_actions_high = torch.tensor(
+                self.cfg.normalization.clip_actions_high,
+                device= self.device
+            )
         if getattr(self.cfg.normalization, "clip_actions_method", None) == "tanh":
             clip_actions = self.cfg.normalization.clip_actions
             self.actions = (torch.tanh(actions) * clip_actions).to(self.device)
+            actions_preprocessed = True
+        elif getattr(self.cfg.normalization, "clip_actions_method", None) == "hard":
+            if self.cfg.control.control_type == "P":
+                actions_low = getattr(
+                    self.cfg.normalization, "clip_actions_low",
+                    self.dof_pos_limits[:, 0] - self.default_dof_pos,
+                )
+                actions_high = getattr(
+                    self.cfg.normalization, "clip_actions_high",
+                    self.dof_pos_limits[:, 1] - self.default_dof_pos,
+                )
+                self.actions = torch.clip(actions, actions_low, actions_high)
+            else:
+                raise NotImplementedError()
             actions_preprocessed = True
         if getattr(self.cfg.normalization, "clip_actions_delta", None) is not None:
             self.actions = torch.clip(
@@ -226,6 +251,7 @@ class LeggedRobotField(LeggedRobot):
                     torch.div(pos_x, self.terrain.env_block_length, rounding_mode= "floor") - 1,
                     min= 0.0,
                 )).cpu()
+        self.extras["episode"]["max_power_throughout_episode"] = self.max_power_per_timestep[env_ids].max().cpu().item()
         
         return return_
 
@@ -244,6 +270,11 @@ class LeggedRobotField(LeggedRobot):
                     torch.div(pos_x, self.terrain.env_block_length, rounding_mode= "floor") - 1,
                     min= 0.0,
                 )).cpu()
+
+        self.max_power_per_timestep = torch.maximum(
+            self.max_power_per_timestep,
+            torch.max(torch.sum(self.substep_torques * self.substep_dof_vel, dim= -1), dim= -1)[0],
+        )
 
         return return_
     
@@ -322,9 +353,40 @@ class LeggedRobotField(LeggedRobot):
                         gymapi.IMAGE_COLOR,
                 )))
 
+        if getattr(self.cfg.normalization, "clip_actions_method", None) is None:
+            print("WARNING: No action clipping method is specified, actions will only be clipped by clip_actions.")
+
+        # projected gravity bias (if needed)
+        if getattr(self.cfg.domain_rand, "randomize_gravity_bias", False):
+            print("Initializing gravity bias for domain randomization")
+            # add cross trajectory domain randomization on projected gravity bias
+            # uniform sample from range
+            self.gravity_bias = torch.rand(self.num_envs, 3, dtype= torch.float, device= self.device, requires_grad= False)
+            self.gravity_bias[:, 0] *= self.cfg.domain_rand.gravity_bias_range["x"][1] - self.cfg.domain_rand.gravity_bias_range["x"][0]
+            self.gravity_bias[:, 0] += self.cfg.domain_rand.gravity_bias_range["x"][0]
+            self.gravity_bias[:, 1] *= self.cfg.domain_rand.gravity_bias_range["y"][1] - self.cfg.domain_rand.gravity_bias_range["y"][0]
+            self.gravity_bias[:, 1] += self.cfg.domain_rand.gravity_bias_range["y"][0]
+            self.gravity_bias[:, 2] *= self.cfg.domain_rand.gravity_bias_range["z"][1] - self.cfg.domain_rand.gravity_bias_range["z"][0]
+            self.gravity_bias[:, 2] += self.cfg.domain_rand.gravity_bias_range["z"][0]
+
+        self.max_power_per_timestep = torch.zeros(self.num_envs, dtype= torch.float32, device= self.device)
+
     def _reset_buffers(self, env_ids):
         return_ = super()._reset_buffers(env_ids)
         if hasattr(self, "velocity_sample_points"): self.velocity_sample_points[env_ids] = 0.
+
+        if getattr(self.cfg.domain_rand, "randomize_gravity_bias", False):
+            assert hasattr(self, "gravity_bias")
+            self.gravity_bias[env_ids] = torch.rand_like(self.gravity_bias[env_ids])
+            self.gravity_bias[env_ids, 0] *= self.cfg.domain_rand.gravity_bias_range["x"][1] - self.cfg.domain_rand.gravity_bias_range["x"][0]
+            self.gravity_bias[env_ids, 0] += self.cfg.domain_rand.gravity_bias_range["x"][0]
+            self.gravity_bias[env_ids, 1] *= self.cfg.domain_rand.gravity_bias_range["y"][1] - self.cfg.domain_rand.gravity_bias_range["y"][0]
+            self.gravity_bias[env_ids, 1] += self.cfg.domain_rand.gravity_bias_range["y"][0]
+            self.gravity_bias[env_ids, 2] *= self.cfg.domain_rand.gravity_bias_range["z"][1] - self.cfg.domain_rand.gravity_bias_range["z"][0]
+            self.gravity_bias[env_ids, 2] += self.cfg.domain_rand.gravity_bias_range["z"][0]
+
+        self.max_power_per_timestep[env_ids] = 0.
+        
         return return_
         
     def _prepare_reward_function(self):
@@ -483,6 +545,16 @@ class LeggedRobotField(LeggedRobot):
             self.cfg.env.obs_components,
             privileged= False,
         )
+        if getattr(self.cfg.domain_rand, "randomize_gravity_bias", False) and "proprioception" in self.cfg.env.obs_components:
+            # NOTE: The logic order is a bit messed up here when combining using legged_robot_noisy.py
+            # When simulating the sensor bias/noise and latency, the gravity bias should be added before
+            # proprioception latency.
+            # However, considering gravirty bias is randomized across trajectory, the latency simulation
+            # from legged_robot_noisy.py does not need to be computed after adding the bias.
+            # So, this computation order looks OK.
+            assert hasattr(self, "gravity_bias")
+            proprioception_slice = get_obs_slice(self.obs_segments, "proprioception")
+            self.obs_buf[:, proprioception_slice[0].start + 6: proprioception_slice[0].start + 9] += self.gravity_bias
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
 
@@ -496,9 +568,13 @@ class LeggedRobotField(LeggedRobot):
         if "proprioception" in getattr(self.cfg.env, "privileged_obs_components", []) \
             and getattr(self.cfg.env, "privileged_use_lin_vel", False):
             # NOTE: according to self.get_obs_segment_from_components, "proprioception" observation
-            # is always the first part of this flattened observation. check super().compute_observations
+            # is always the FIRST part of this flattened observation. check super().compute_observations
             # and self.cfg.env.use_lin_vel for the reason of this if branch.
             self.privileged_obs_buf[:, :3] = self.base_lin_vel * self.obs_scales.lin_vel
+        if getattr(self.cfg.domain_rand, "randomize_privileged_gravity_bias", False) and "proprioception" in getattr(self.cfg.env, "privileged_obs_components", []):
+            assert hasattr(self, "gravity_bias")
+            proprioception_slice = get_obs_slice(self.privileged_obs_segments, "proprioception")
+            self.privileged_obs_buf[:, proprioception_slice[0].start + 6: proprioception_slice[0].start + 9] += self.gravity_bias
 
         for key in self.sensor_handles[0].keys():
             if "camera" in key:
@@ -558,12 +634,31 @@ class LeggedRobotField(LeggedRobot):
 
     def _create_envs(self):
         if self.cfg.domain_rand.randomize_motor:
+            mtr_rng = self.cfg.domain_rand.leg_motor_strength_range
             self.motor_strength = torch_rand_float(
-                self.cfg.domain_rand.leg_motor_strength_range[0],
-                self.cfg.domain_rand.leg_motor_strength_range[1],
-                (self.num_envs, 12),
+                mtr_rng[0],
+                mtr_rng[1],
+                (self.num_envs, self.num_actions),
                 device=self.device,
             )
+        
+        return_ = super()._create_envs()
+        
+        front_hip_names = getattr(self.cfg.asset, "front_hip_names", ["FR_hip_joint", "FL_hip_joint"])
+        self.front_hip_indices = torch.zeros(len(front_hip_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i, name in enumerate(front_hip_names):
+            self.front_hip_indices[i] = self.dof_names.index(name)
+
+        rear_hip_names = getattr(self.cfg.asset, "rear_hip_names", ["RR_hip_joint", "RL_hip_joint"])
+        self.rear_hip_indices = torch.zeros(len(rear_hip_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i, name in enumerate(rear_hip_names):
+            self.rear_hip_indices[i] = self.dof_names.index(name)
+
+        hip_names = front_hip_names + rear_hip_names
+        self.hip_indices = torch.zeros(len(hip_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i, name in enumerate(hip_names):
+            self.hip_indices[i] = self.dof_names.index(name)
+        
         return super()._create_envs()
     
     def _process_rigid_shape_props(self, props, env_id):
@@ -703,10 +798,16 @@ class LeggedRobotField(LeggedRobot):
 
     def draw_volume_sample_points(self):
         sphere_geom = gymutil.WireframeSphereGeometry(0.005, 4, 4, None, color=(1, 0.1, 0))
+        sphere_penetrate_geom = gymutil.WireframeSphereGeometry(0.005, 4, 4, None, color=(0.1, 0.6, 0.6))
+        if self.cfg.terrain.selected == "BarrierTrack":
+            penetration_mask = self.terrain.get_penetration_mask(self.volume_sample_points.view(-1, 3)).view(self.num_envs, -1)
         for env_idx in range(self.num_envs):
             for point_idx in range(self.volume_sample_points.shape[1]):
                 sphere_pose = gymapi.Transform(gymapi.Vec3(*self.volume_sample_points[env_idx, point_idx]), r= None)
-                gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[env_idx], sphere_pose)
+                if penetration_mask[env_idx, point_idx]:
+                    gymutil.draw_lines(sphere_penetrate_geom, self.gym, self.viewer, self.envs[env_idx], sphere_pose)
+                else:
+                    gymutil.draw_lines(sphere_geom, self.gym, self.viewer, self.envs[env_idx], sphere_pose)
 
     ##### Additional rewards #####
     def _reward_lin_vel_l2norm(self):
@@ -714,6 +815,10 @@ class LeggedRobotField(LeggedRobot):
 
     def _reward_world_vel_l2norm(self):
         return torch.norm((self.commands[:, :2] - self.root_states[:, 7:9]), dim= 1)
+
+    def _reward_tracking_world_vel(self):
+        world_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.root_states[:, 7:9]), dim= 1)
+        return torch.exp(-world_vel_error/self.cfg.rewards.tracking_sigma)
 
     def _reward_legs_energy(self):
         return torch.sum(torch.square(self.torques * self.dof_vel), dim=1)
@@ -729,6 +834,10 @@ class LeggedRobotField(LeggedRobot):
 
     def _reward_alive(self):
         return 1.
+
+    def _reward_dof_error(self):
+        dof_error = torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1)
+        return dof_error
 
     def _reward_lin_cmd(self):
         """ This reward term does not depend on the policy, depends on the command """
@@ -766,6 +875,157 @@ class LeggedRobotField(LeggedRobot):
         penetration_mask = self.terrain.get_penetration_mask(self.volume_sample_points.view(-1, 3)).view(self.num_envs, -1)
         penetration_mask *= torch.norm(self.velocity_sample_points, dim= -1) + 1e-3
         return torch.sum(penetration_mask, dim= -1)
+
+    def _reward_tilt_cond(self):
+        """ Conditioned reward term in terms of whether the robot is engaging the tilt obstacle
+        Use positive factor to enable rolling angle when incountering tilt obstacle
+        """
+        if not self.check_BarrierTrack_terrain(): return torch.zeros_like(self.root_states[:, 0])
+        roll, pitch, yaw = get_euler_xyz(self.root_states[:, 3:7])
+        pi = torch.acos(torch.zeros(1)).item() * 2 # which is 3.1415927410125732
+        roll[roll > pi] -= pi * 2 # to range (-pi, pi)
+        roll[roll < -pi] += pi * 2 # to range (-pi, pi)
+        if hasattr(self, "volume_sample_points"):
+            self.refresh_volume_sample_points()
+            stepping_obstacle_info = self.terrain.get_stepping_obstacle_info(self.volume_sample_points.view(-1, 3))
+        else:
+            stepping_obstacle_info = self.terrain.get_stepping_obstacle_info(self.root_states[:, :3])
+        stepping_obstacle_info = stepping_obstacle_info.view(self.num_envs, -1, stepping_obstacle_info.shape[-1])
+        # Assuming that each robot will only be in one obstacle or non obstacle.
+        robot_stepping_obstacle_id = torch.max(stepping_obstacle_info[:, :, 0], dim= -1)[0]
+        tilting_mask = robot_stepping_obstacle_id == self.terrain.track_options_id_dict["tilt"]
+        return_ = torch.where(tilting_mask, torch.clip(torch.abs(roll), 0, torch.pi/2), -torch.clip(torch.abs(roll), 0, torch.pi/2))
+        return return_
+
+    def _reward_hip_pos(self):
+        return torch.sum(torch.square(self.dof_pos[:, self.hip_indices] - self.default_dof_pos[:, self.hip_indices]), dim=1)
+
+    def _reward_front_hip_pos(self):
+        """ Reward the robot to stop moving its front hips """
+        return torch.sum(torch.square(self.dof_pos[:, self.front_hip_indices] - self.default_dof_pos[:, self.front_hip_indices]), dim=1)
+
+    def _reward_rear_hip_pos(self):
+        """ Reward the robot to stop moving its rear hips """
+        return torch.sum(torch.square(self.dof_pos[:, self.rear_hip_indices] - self.default_dof_pos[:, self.rear_hip_indices]), dim=1)
+    
+    def _reward_down_cond(self):
+        if not self.check_BarrierTrack_terrain(): return torch.zeros_like(self.root_states[:, 0])
+        if not hasattr(self, "volume_sample_points"): return torch.zeros_like(self.root_states[:, 0])
+        self.refresh_volume_sample_points()
+        engaging_obstacle_info = self.terrain.get_engaging_block_info(
+            self.root_states[:, :3],
+            self.volume_sample_points - self.root_states[:, :3].unsqueeze(-2), # (n_envs, n_points, 3)
+        )
+        roll, pitch, yaw = get_euler_xyz(self.root_states[:, 3:7])
+        pi = torch.acos(torch.zeros(1)).item() * 2 # which is 3.1415927410125732
+        pitch[pitch > pi] -= pi * 2 # to range (-pi, pi)
+        pitch[pitch < -pi] += pi * 2 # to range (-pi, pi)
+        engaging_mask = (engaging_obstacle_info[:, 1 + self.terrain.track_options_id_dict["jump"]] > 0) \
+            & (engaging_obstacle_info[:, 1 + self.terrain.max_track_options + 2] < 0.)
+        pitch_err = torch.abs(pitch - 0.2)
+        return torch.exp(-pitch_err/self.cfg.rewards.tracking_sigma) * engaging_mask # the higher positive factor, the more you want the robot to pitch down 0.2 rad
+
+    def _reward_jump_x_vel_cond(self):
+        if not self.check_BarrierTrack_terrain(): return torch.zeros_like(self.root_states[:, 0])
+        if not hasattr(self, "volume_sample_points"): return torch.zeros_like(self.root_states[:, 0])
+        self.refresh_volume_sample_points()
+        engaging_obstacle_info = self.terrain.get_engaging_block_info(
+            self.root_states[:, :3],
+            self.volume_sample_points - self.root_states[:, :3].unsqueeze(-2), # (n_envs, n_points, 3)
+        )
+        engaging_mask = (engaging_obstacle_info[:, 1 + self.terrain.track_options_id_dict["jump"]] > 0) \
+            & (engaging_obstacle_info[:, 1 + self.terrain.max_track_options + 2] > 0.) \
+            & (engaging_obstacle_info[:, 0] > 0) # engaging jump-up, not engaging jump-down, positive distance.
+        roll, pitch, yaw = get_euler_xyz(self.root_states[:, 3:7])
+        pi = torch.acos(torch.zeros(1)).item() * 2 # which is 3.1415927410125732
+        pitch[pitch > pi] -= pi * 2 # to range (-pi, pi)
+        pitch[pitch < -pi] += pi * 2 # to range (-pi, pi)
+        pitch_up_mask = pitch < -0.75 # a hack value
+
+        return torch.clip(self.base_lin_vel[:, 0], max= 1.5) * engaging_mask * pitch_up_mask
+
+    def _reward_sync_legs_cond(self):
+        """ A hack to force same actuation on both rear legs when jump. """
+        if not self.check_BarrierTrack_terrain(): return torch.zeros_like(self.root_states[:, 0])
+        if not hasattr(self, "volume_sample_points"): return torch.zeros_like(self.root_states[:, 0])
+        self.refresh_volume_sample_points()
+        engaging_obstacle_info = self.terrain.get_engaging_block_info(
+            self.root_states[:, :3],
+            self.volume_sample_points - self.root_states[:, :3].unsqueeze(-2), # (n_envs, n_points, 3)
+        )
+        engaging_mask = (engaging_obstacle_info[:, 1 + self.terrain.track_options_id_dict["jump"]] > 0) \
+            & (engaging_obstacle_info[:, 1 + self.terrain.max_track_options + 2] > 0.) \
+            & (engaging_obstacle_info[:, 0] > 0) # engaging jump-up, not engaging jump-down, positive distance.
+        rr_legs = torch.clone(self.actions[:, 6:9]) # shoulder, thigh, calf
+        rl_legs = torch.clone(self.actions[:, 9:12]) # shoulder, thigh, calf
+        rl_legs[:, 0] *= -1 # flip the sign of shoulder action
+        return torch.norm(rr_legs - rl_legs, dim= -1) * engaging_mask
+    
+    def _reward_sync_all_legs_cond(self):
+        """ A hack to force same actuation on both front/rear legs when jump. """
+        if not self.check_BarrierTrack_terrain(): return torch.zeros_like(self.root_states[:, 0])
+        if not hasattr(self, "volume_sample_points"): return torch.zeros_like(self.root_states[:, 0])
+        self.refresh_volume_sample_points()
+        engaging_obstacle_info = self.terrain.get_engaging_block_info(
+            self.root_states[:, :3],
+            self.volume_sample_points - self.root_states[:, :3].unsqueeze(-2), # (n_envs, n_points, 3)
+        )
+        engaging_mask = (engaging_obstacle_info[:, 1 + self.terrain.track_options_id_dict["jump"]] > 0) \
+            & (engaging_obstacle_info[:, 1 + self.terrain.max_track_options + 2] > 0.) \
+            & (engaging_obstacle_info[:, 0] > 0) # engaging jump-up, not engaging jump-down, positive distance.
+        right_legs = torch.clone(torch.cat([
+            self.actions[:, 0:3],
+            self.actions[:, 6:9],
+        ], dim= -1)) # shoulder, thigh, calf
+        left_legs = torch.clone(torch.cat([
+            self.actions[:, 3:6],
+            self.actions[:, 9:12],
+        ], dim= -1)) # shoulder, thigh, calf
+        left_legs[:, 0] *= -1 # flip the sign of shoulder action
+        left_legs[:, 3] *= -1 # flip the sign of shoulder action
+        return torch.norm(right_legs - left_legs, p= 1, dim= -1) * engaging_mask
+    
+    def _reward_sync_all_legs(self):
+        right_legs = torch.clone(torch.cat([
+            self.actions[:, 0:3],
+            self.actions[:, 6:9],
+        ], dim= -1)) # shoulder, thigh, calf
+        left_legs = torch.clone(torch.cat([
+            self.actions[:, 3:6],
+            self.actions[:, 9:12],
+        ], dim= -1)) # shoulder, thigh, calf
+        left_legs[:, 0] *= -1 # flip the sign of shoulder action
+        left_legs[:, 3] *= -1 # flip the sign of shoulder action
+        return torch.norm(right_legs - left_legs, p= 1, dim= -1)
+    
+    def _reward_dof_error_cond(self):
+        """ Force dof error when not engaging obstacle """
+        if not self.check_BarrierTrack_terrain(): return torch.zeros_like(self.root_states[:, 0])
+        if not hasattr(self, "volume_sample_points"): return torch.zeros_like(self.root_states[:, 0])
+        self.refresh_volume_sample_points()
+        engaging_obstacle_info = self.terrain.get_engaging_block_info(
+            self.root_states[:, :3],
+            self.volume_sample_points - self.root_states[:, :3].unsqueeze(-2), # (n_envs, n_points, 3)
+        )
+        engaging_mask = (engaging_obstacle_info[:, 1] > 0)
+        return torch.sum(torch.square(self.dof_pos - self.default_dof_pos), dim=1) * engaging_mask
+        
+    def _reward_leap_bonous_cond(self):
+        """ counteract the tracking reward loss during leap"""
+        if not self.check_BarrierTrack_terrain(): return torch.zeros_like(self.root_states[:, 0])
+        if not hasattr(self, "volume_sample_points"): return torch.zeros_like(self.root_states[:, 0])
+        self.refresh_volume_sample_points()
+        engaging_obstacle_info = self.terrain.get_engaging_block_info(
+            self.root_states[:, :3],
+            self.volume_sample_points - self.root_states[:, :3].unsqueeze(-2), # (n_envs, n_points, 3)
+        )
+        engaging_mask = (engaging_obstacle_info[:, 1 + self.terrain.track_options_id_dict["leap"]] > 0) \
+            & (-engaging_obstacle_info[:, 1 + self.terrain.max_track_options + 1] < engaging_obstacle_info[:, 0]) \
+            & (engaging_obstacle_info[:, 0] < 0.) # engaging jump-up, not engaging jump-down, positive distance.
+
+        world_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.root_states[:, 7:9]), dim= 1)
+        return (1 - torch.exp(-world_vel_error/self.cfg.rewards.tracking_sigma)) * engaging_mask # reverse version of tracking reward
+
 
     ##### Some helper functions that override parent class attributes #####
     @property

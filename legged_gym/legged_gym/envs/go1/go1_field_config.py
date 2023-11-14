@@ -1,162 +1,161 @@
 import numpy as np
 import os
 from os import path as osp
+from legged_gym.utils.helpers import merge_dict
 from legged_gym.envs.a1.a1_field_config import A1FieldCfg, A1FieldCfgPPO
 
+go1_const_dof_range = dict(
+    Hip_max= 1.047,
+    Hip_min=-1.047,
+    Thigh_max= 2.966,
+    Thigh_min= -0.663,
+    Calf_max= -0.837,
+    Calf_min= -2.721,
+)
+
+go1_action_scale = 0.5
+
 class Go1FieldCfg( A1FieldCfg ):
+    class env( A1FieldCfg.env ):
+        num_envs = 8192
+
+    class init_state( A1FieldCfg.init_state ):
+        pos = [0., 0., 0.7]
+        zero_actions = False
+
+    class sensor( A1FieldCfg.sensor ):
+        class proprioception( A1FieldCfg.sensor.proprioception ):
+            delay_action_obs = False
+            latency_range = [0.04-0.0025, 0.04+0.0075] # comment this if it is too hard to train.
 
     class terrain( A1FieldCfg.terrain ):
-        
         num_rows = 20
-        num_cols = 50
-        selected = "BarrierTrack"
-        max_init_terrain_level = 0 # for climb, leap finetune
-        border_size = 5
-        slope_treshold = 100.
+        num_cols = 80
 
-        curriculum = True # for tilt, crawl, climb, leap
-        # curriculum = False # for walk
-        horizontal_scale = 0.025 # [m]
+        # curriculum = True # for tilt, crawl, jump, leap
+        curriculum = False # for walk
         pad_unavailable_info = True
 
-        BarrierTrack_kwargs = dict(
+        BarrierTrack_kwargs = merge_dict(A1FieldCfg.terrain.BarrierTrack_kwargs, dict(
             options= [
-                # "climb",
+                # "jump",
                 # "crawl",
-                "tilt",
+                # "tilt",
                 # "leap",
             ], # each race track will permute all the options
-            track_width= 1.6, # for climb, crawl, tilt, walk
-            # track_width= 1.0, # for leap
+            # randomize_obstacle_order= True,
+            track_width= 1.6,
             track_block_length= 2., # the x-axis distance from the env origin point
             wall_thickness= (0.04, 0.2), # [m]
-            wall_height= 0.01, # [m] for climb, crawl, tilt, walk
-            # wall_height= -0.5, # for leap
-            climb= dict(
-                height= (0.2, 0.6),
-                depth= (0.1, 0.8), # size along the forward axis
-                fake_offset= 0.0, # [m] an offset that make the robot easier to get into the obstacle
-            ),
-            crawl= dict(
-                height= (0.28, 0.38),
-                depth= (0.1, 0.5), # size along the forward axis
-                wall_height= 0.6,
-                no_perlin_at_obstacle= False,
-            ),
-            tilt= dict(
-                width= (0.24, 0.32),
-                depth= (0.4, 1.), # size along the forward axis
-                opening_angle= 0.0, # [rad] an opening that make the robot easier to get into the obstacle
-                wall_height= 0.5,
-            ),
-            leap= dict(
-                length= (0.2, 1.0),
-                depth= (0.4, 0.8),
-                height= 0.25,
-            ),
+            wall_height= 0.0,
             add_perlin_noise= True,
             border_perlin_noise= True,
-            border_height= 0., # for climb, crawl, tilt, walk
-            # border_height= -0.5, # for leap
-            virtual_terrain= False, # for climb, crawl, leap
-            # virtual_terrain= True, # for tilt
+            border_height= 0.,
+            virtual_terrain= False,
             draw_virtual_terrain= True,
             engaging_next_threshold= 1.2,
+            engaging_finish_threshold= 0.,
             curriculum_perlin= False,
-            no_perlin_threshold= 0.0, # for crawl, tilt, walk
-            # no_perlin_threshold= 0.05, # for leap
-            # no_perlin_threshold= 0.06, # for climb
-        )
+            no_perlin_threshold= 0.1,
+        ))
 
         TerrainPerlin_kwargs = dict(
-            # zScale= 0.1, # for crawl
-            zScale= 0.12, # for tilt
-            # zScale= [0.05, 0.1], # for climb
-            # zScale= [0.04, 0.1], # for leap
-            # zScale= [0.1, 0.15], # for walk
+            zScale= [0.08, 0.15],
             frequency= 10,
         )
 
     class commands( A1FieldCfg.commands ):
         class ranges( A1FieldCfg.commands.ranges ):
-            # lin_vel_x = [0.0, 1.0] # for walk
-            # lin_vel_x = [0.8, 1.5] # for climb
-            # lin_vel_x = [1.0, 1.5] # for leap
-            lin_vel_x = [0.3, 0.8] # for tilt, crawl
+            lin_vel_x = [-1.0, 1.0]
             lin_vel_y = [0.0, 0.0]
             ang_vel_yaw = [0., 0.]
 
 
     class control( A1FieldCfg.control ):
-        stiffness = {'joint': 50.}
-        damping = {'joint': 1.}
-        # action_scale = [0.2, 0.4, 0.4] * 4 # for walk
-        action_scale = 0.5 # for tilt, crawl, climb, leap
-        # for climb, leap
+        stiffness = {'joint': 40.}
+        damping = {'joint': 0.5}
+        action_scale = go1_action_scale
         torque_limits = [20., 20., 25.] * 4
-        computer_clip_torque = True
+        computer_clip_torque = False
         motor_clip_torque = False
 
     class asset( A1FieldCfg.asset ):
         file = "{LEGGED_GYM_ROOT_DIR}/resources/robots/go1/urdf/go1.urdf"
-        penalize_contacts_on = ["base", "thigh"]
-        terminate_after_contacts_on = ["base", "imu"] # for climb, leap, tilt, walk no-virtual
+        sdk_dof_range = go1_const_dof_range
 
-    class termination:
-        # additional factors that determines whether to terminates the episode
-        termination_terms = [
-            "roll", # for tilt
-            "pitch",
-            "z_low",
-            "z_high",
-            "out_of_track", # for leap, walk
-        ]
-
+    class termination( A1FieldCfg.termination ):
         roll_kwargs = dict(
-            threshold= 0.8, # [rad] # for tilt
-            tilt_threshold= 1.5, # for tilt (condition on engaging block)
+            threshold= 1.5,
         )
         pitch_kwargs = dict(
-            threshold= 1.6,
-            climb_threshold= 1.6,
-            leap_threshold= 1.5,
+            threshold= 1.5,
         )
-        z_low_kwargs = dict(
-            threshold= 0.08, # [m]
-        )
-        z_high_kwargs = dict(
-            threshold= 1.5, # [m]
-        )
-        out_of_track_kwargs = dict(
-            threshold= 1., # [m]
-        )
-
-        check_obstacle_conditioned_threshold = True
-        timeout_at_border = True
-        timeout_at_finished = True
 
     class domain_rand( A1FieldCfg.domain_rand ):
-        randomize_com = True
-        class com_range:
-            x = [-0.05, 0.15]
-            y = [-0.1, 0.1]
-            z = [-0.05, 0.05]
-        
-        randomize_base_mass = True
-        added_mass_range = [1.0, 3.0]
+        class com_range( A1FieldCfg.domain_rand.com_range ):
+            x = [-0.2, 0.2]
+
+        init_base_pos_range = merge_dict(A1FieldCfg.domain_rand.init_base_pos_range, dict(
+            x= [0.05, 0.6],
+        ))
+        init_base_rot_range = dict(
+            roll= [-0.75, 0.75],
+            pitch= [-0.75, 0.75],
+        )
+        # init_base_vel_range = [-1.0, 1.0]
+        init_base_vel_range = dict(
+            x= [-0.2, 1.5],
+            y= [-0.2, 0.2],
+            z= [-0.2, 0.2],
+            roll= [-1., 1.],
+            pitch= [-1., 1.],
+            yaw= [-1., 1.],
+        )
+        init_dof_vel_range = [-5, 5]
 
     class rewards( A1FieldCfg.rewards ):
         class scales:
-            tracking_ang_vel = 0.1
-            world_vel_l2norm = -1.
-            legs_energy_substeps = -1e-5
-            exceed_torque_limits_i = -0.1
-            alive = 2.
-            lin_pos_y = -0.2
-            yaw_abs = -0.5
-            penetrate_depth = -5e-3
-            penetrate_volume = -5e-3
-        soft_dof_pos_limit = 0.01
+            tracking_ang_vel = 0.05
+            tracking_world_vel = 3.
+            # world_vel_l2norm = -2.
+            # alive = 3.
+            legs_energy_substeps = -2e-5
+            # penalty for hardware safety
+            exceed_dof_pos_limits = -8e-1
+            exceed_torque_limits_l1norm = -8e-1
+            # penalty for walking gait, probably no need
+            lin_vel_z = -1.
+            ang_vel_xy = -0.05
+            orientation = -4.
+            dof_acc = -2.5e-7
+            collision = -10.
+            action_rate = -0.1
+            delta_torques = -1e-7
+            torques = -1.e-5
+            yaw_abs = -0.8
+            lin_pos_y = -0.8
+            hip_pos = -0.4
+            dof_error = -0.04
+        soft_dof_pos_limit = 0.8 # only in training walking
+        max_contact_force = 200.0
+        
+    class normalization( A1FieldCfg.normalization ):
+        dof_pos_redundancy = 0.2
+        clip_actions_method = "hard"
+        clip_actions_low = []
+        clip_actions_high = []
+        for sdk_joint_name, sim_joint_name in zip(
+            ["Hip", "Thigh", "Calf"] * 4,
+            [ # in the order as simulation
+                "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+                "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+                "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+                "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+            ],
+        ):
+            clip_actions_low.append( (go1_const_dof_range[sdk_joint_name + "_min"] + dof_pos_redundancy - A1FieldCfg.init_state.default_joint_angles[sim_joint_name]) / go1_action_scale )
+            clip_actions_high.append( (go1_const_dof_range[sdk_joint_name + "_max"] - dof_pos_redundancy - A1FieldCfg.init_state.default_joint_angles[sim_joint_name]) / go1_action_scale )
+        del dof_pos_redundancy, sdk_joint_name, sim_joint_name
 
     class sim( A1FieldCfg.sim ):
         body_measure_points = { # transform are related to body frame
@@ -184,49 +183,24 @@ class Go1FieldCfg( A1FieldCfg ):
             ),
         }
 
-    class curriculum:
-        # chosen heuristically, please refer to `LeggedRobotField._get_terrain_curriculum_move` with fixed body_measure_points
-        # for crawl (not updated)
-        penetrate_volume_threshold_harder = 1500
-        penetrate_volume_threshold_easier = 10000
-        penetrate_depth_threshold_harder = 10
-        penetrate_depth_threshold_easier = 400
-        # for tilt
-        # penetrate_volume_threshold_harder = 2000
-        # penetrate_volume_threshold_easier = 10000
-        # penetrate_depth_threshold_harder = 20
-        # penetrate_depth_threshold_easier = 300
-        # for climb
-        # penetrate_volume_threshold_harder = 6000
-        # penetrate_volume_threshold_easier = 12000
-        # penetrate_depth_threshold_harder = 600
-        # penetrate_depth_threshold_easier = 1600
-        # for leap
-        # penetrate_volume_threshold_harder = 9000
-        # penetrate_volume_threshold_easier = 10000
-        # penetrate_depth_threshold_harder = 300
-        # penetrate_depth_threshold_easier = 5000
-
 logs_root = osp.join(osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))), "logs")
 class Go1FieldCfgPPO( A1FieldCfgPPO ):
     class algorithm( A1FieldCfgPPO.algorithm ):
-        entropy_coef = 0.01 # for walk
-        clip_min_std = 1e-12 # for walk
+        entropy_coef = 0.0
+        clip_min_std = 0.2
+
+    class policy( A1FieldCfgPPO.policy ):
+        mu_activation = None # use action clip method by env
 
     class runner( A1FieldCfgPPO.runner ):
         experiment_name = "field_go1"
-        run_name = "".join(["Skills",
-        ("_all" if len(Go1FieldCfg.terrain.BarrierTrack_kwargs["options"]) > 1 else ("_" + Go1FieldCfg.terrain.BarrierTrack_kwargs["options"][0] if Go1FieldCfg.terrain.BarrierTrack_kwargs["options"] else "PlaneWalking")),
+        resume = False
+        load_run = None
+        
+        run_name = "".join(["WalkForward",
         ("_pEnergySubsteps" + np.format_float_scientific(-Go1FieldCfg.rewards.scales.legs_energy_substeps, trim= "-", exp_digits= 1) if getattr(Go1FieldCfg.rewards.scales, "legs_energy_substeps", 0.0) != 0.0 else ""),
-        ("_pPenV" + np.format_float_scientific(-Go1FieldCfg.rewards.scales.penetrate_volume, trim= "-", exp_digits= 1) if getattr(Go1FieldCfg.rewards.scales, "penetrate_volume", 0.) < 0. else ""),
-        ("_pPenD" + np.format_float_scientific(-Go1FieldCfg.rewards.scales.penetrate_depth, trim= "-", exp_digits= 1) if getattr(Go1FieldCfg.rewards.scales, "penetrate_depth", 0.) < 0. else ""),
-        ("_rAlive{:d}".format(int(Go1FieldCfg.rewards.scales.alive)) if Go1FieldCfg.rewards.scales.alive != 2 else ""),
-        ("_rAngVel{:.2f}".format(Go1FieldCfg.rewards.scales.tracking_ang_vel) if Go1FieldCfg.rewards.scales.tracking_ang_vel != 0.05 else ""),
-        ("_pTorqueExceedIndicate" + np.format_float_scientific(-Go1FieldCfg.rewards.scales.exceed_torque_limits_i, trim= "-", exp_digits= 1) if getattr(Go1FieldCfg.rewards.scales, "exceed_torque_limits_i", 0.) != 0. else ""),
-        ("_pTorqueExceedSquare" + np.format_float_scientific(-Go1FieldCfg.rewards.scales.exceed_torque_limits_square, trim= "-", exp_digits= 1) if getattr(Go1FieldCfg.rewards.scales, "exceed_torque_limits_square", 0.) != 0. else ""),
-        ("_pYaw{:.2f}".format(-Go1FieldCfg.rewards.scales.yaw_abs) if Go1FieldCfg.rewards.scales.yaw_abs != 0. else ""),
-        ("_noComputerTorqueClip" if not Go1FieldCfg.control.computer_clip_torque else ""),
-        ("_virtualTerrain" if Go1FieldCfg.terrain.BarrierTrack_kwargs["virtual_terrain"] else ""),
+        ("_rTrackVel" + np.format_float_scientific(Go1FieldCfg.rewards.scales.tracking_world_vel, precision=1, exp_digits=1, trim="-") if getattr(Go1FieldCfg.rewards.scales, "tracking_world_vel", 0.0) != 0.0 else ""),
+        ("_pWorldVel" + np.format_float_scientific(-Go1FieldCfg.rewards.scales.world_vel_l2norm, precision=1, exp_digits=1, trim="-") if getattr(Go1FieldCfg.rewards.scales, "world_vel_l2norm", 0.0) != 0.0 else ""),
         ("_aScale{:d}{:d}{:d}".format(
                 int(Go1FieldCfg.control.action_scale[0] * 10),
                 int(Go1FieldCfg.control.action_scale[1] * 10),
@@ -234,15 +208,8 @@ class Go1FieldCfgPPO( A1FieldCfgPPO ):
             ) if isinstance(Go1FieldCfg.control.action_scale, (tuple, list)) \
             else "_aScale{:.1f}".format(Go1FieldCfg.control.action_scale)
         ),
-        ("_torqueClip{:.0f}".format(Go1FieldCfg.control.torque_limits) if not isinstance(Go1FieldCfg.control.torque_limits, (tuple, list)) else (
-            "_tClip{:d}{:d}{:d}".format(
-                int(Go1FieldCfg.control.torque_limits[0]),
-                int(Go1FieldCfg.control.torque_limits[1]),
-                int(Go1FieldCfg.control.torque_limits[2]),
-            )
-        )),
+        ("_actionClip" + Go1FieldCfg.normalization.clip_actions_method if getattr(Go1FieldCfg.normalization, "clip_actions_method", None) is not None else ""),
+        ("_from" + "_".join(load_run.split("/")[-1].split("_")[:2]) if resume else "_noResume"),
         ])
-        resume = False
-        load_run = ""
-        max_iterations = 10000
+        max_iterations = 20000
         save_interval = 500

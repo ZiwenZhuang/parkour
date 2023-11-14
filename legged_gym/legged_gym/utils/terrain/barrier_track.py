@@ -12,7 +12,7 @@ class BarrierTrack:
     # default kwargs
     track_kwargs = dict(
             options= [
-                "climb",
+                "jump",
                 "crawl",
                 "tilt",
             ], # each race track will permute all the options
@@ -22,12 +22,11 @@ class BarrierTrack:
             track_block_length= 1.2, # the x-axis distance from the env origin point
             wall_thickness= 0.04, # [m]
             wall_height= 0.5, # [m]
-            climb= dict(
+            jump= dict(
                 height= 0.3,
                 depth= 0.04, # size along the forward axis
-                fake_offset= 0.0, # [m] fake offset will make climb's height info greater than its physical height.
-                fake_height= 0.0, # [m] offset/height only one of them can be non-zero
-                climb_down_prob= 0.0, # if > 0, will have a chance to climb down from the obstacle
+                fake_offset= 0.0, # [m] fake offset will make jump's height info greater than its physical height.
+                jump_down_prob= 0.0, # if > 0, will have a chance to jump down from the obstacle
             ),
             crawl= dict(
                 height= 0.32,
@@ -53,16 +52,18 @@ class BarrierTrack:
             border_height= 0., # Incase we want the surrounding plane to be lower than the track
             virtual_terrain= False,
             draw_virtual_terrain= False, # set True for visualization
-            check_skill_combinations= False, # check if some specific skills are connected, if set. e.g. climb -> leap
+            check_skill_combinations= False, # check if some specific skills are connected, if set. e.g. jump -> leap
             engaging_next_threshold= 0., # if > 0, engaging_next is based on this threshold instead of track_block_length/2. Make sure the obstacle is not too long.
+            engaging_finish_threshold= 0., # an obstacle is considered finished only if the last volume point is this amount away from the block origin.
             curriculum_perlin= True, # If True, perlin noise scale will be depends on the difficulty if possible.
             no_perlin_threshold= 0.02, # If the perlin noise is too small, clip it to zero.
+            walk_in_skill_gap= False, # If True, obstacle ID will be walk when the distance to the obstacle does not reach engaging_next_threshold
         )
-    max_track_options = 4 # ("tilt", "crawl", "climb", "dynamic") at most
+    max_track_options = 4 # ("tilt", "crawl", "jump", "dynamic") at most
     track_options_id_dict = {
         "tilt": 1,
         "crawl": 2,
-        "climb": 3,
+        "jump": 3,
         "leap": 4,
      } # track_id are aranged in this order
     def __init__(self, cfg, num_robots: int) -> None:
@@ -88,7 +89,7 @@ class BarrierTrack:
         # For each track block (n_options + 1 in total), 3 parameters are enabled:
         # - track_id: int, starting track is 0, other numbers depends on the options order.
         # - obstacle_depth: float,
-        # - obstacle_critical_params: e.g. tilt width, crawl height, climb height
+        # - obstacle_critical_params: e.g. tilt width, crawl height, jump height
 
         # num_rows + 1 incase the robot finish the entire row of tracks
         self.track_info_map = torch.zeros(
@@ -101,6 +102,11 @@ class BarrierTrack:
             dtype= torch.float32,
             device= self.device,
         )
+        self.block_starting_height_map = torch.zeros(
+            (self.cfg.num_rows, self.cfg.num_cols, self.n_blocks_per_track),
+            dtype= torch.float32,
+            device= self.device,
+        ) # height [m] related to the world coordinate system
 
     def initialize_track(self):
         """ All track blocks are defined as follows
@@ -126,7 +132,7 @@ class BarrierTrack:
             np.ceil(self.track_kwargs["track_block_length"] / self.cfg.horizontal_scale).astype(int),
             np.ceil(self.track_kwargs["track_width"] / self.cfg.horizontal_scale).astype(int),
         )
-        self.n_blocks_per_track = (self.track_kwargs["n_obstacles_per_track"] + 1) if self.track_kwargs["randomize_obstacle_order"] else (len(self.track_kwargs["options"]) + 1)
+        self.n_blocks_per_track = (self.track_kwargs["n_obstacles_per_track"] + 1) if (self.track_kwargs["randomize_obstacle_order"] and len(self.track_kwargs["options"]) > 0) else (len(self.track_kwargs["options"]) + 1)
         self.track_resolution = (
             np.ceil(self.track_kwargs["track_block_length"] * self.n_blocks_per_track / self.cfg.horizontal_scale).astype(int),
             np.ceil(self.track_kwargs["track_width"] / self.cfg.horizontal_scale).astype(int),
@@ -183,7 +189,7 @@ class BarrierTrack:
         height_offset_px = 0
         return track_trimesh, track_heightfield, block_info, height_offset_px
 
-    def get_climb_track(self,
+    def get_jump_track(self,
             wall_thickness,
             trimesh_template,
             heightfield_template,
@@ -191,25 +197,25 @@ class BarrierTrack:
             heightfield_noise= None,
             virtual= False,
         ):
-        if isinstance(self.track_kwargs["climb"]["depth"], (tuple, list)):
+        if isinstance(self.track_kwargs["jump"]["depth"], (tuple, list)):
             if not virtual:
-                climb_depth = min(*self.track_kwargs["climb"]["depth"])
+                jump_depth = min(*self.track_kwargs["jump"]["depth"])
             else:
-                climb_depth = np.random.uniform(*self.track_kwargs["climb"]["depth"])
+                jump_depth = np.random.uniform(*self.track_kwargs["jump"]["depth"])
         else:
-            climb_depth = self.track_kwargs["climb"]["depth"]
-        if isinstance(self.track_kwargs["climb"]["height"], (tuple, list)):
+            jump_depth = self.track_kwargs["jump"]["depth"]
+        if isinstance(self.track_kwargs["jump"]["height"], (tuple, list)):
             if difficulty is None:
-                climb_height = np.random.uniform(*self.track_kwargs["climb"]["height"])
+                jump_height = np.random.uniform(*self.track_kwargs["jump"]["height"])
             else:
-                climb_height = (1-difficulty) * self.track_kwargs["climb"]["height"][0] + difficulty * self.track_kwargs["climb"]["height"][1]
+                jump_height = (1-difficulty) * self.track_kwargs["jump"]["height"][0] + difficulty * self.track_kwargs["jump"]["height"][1]
         else:
-            climb_height = self.track_kwargs["climb"]["height"]
-        if self.track_kwargs["climb"].get("climb_down_prob", 0.) > 0.:
-            if np.random.uniform() < self.track_kwargs["climb"]["climb_down_prob"]:
-                climb_height = -climb_height
-        depth_px = int(climb_depth / self.cfg.horizontal_scale)
-        height_value = climb_height / self.cfg.vertical_scale
+            jump_height = self.track_kwargs["jump"]["height"]
+        if self.track_kwargs["jump"].get("jump_down_prob", 0.) > 0.:
+            if np.random.uniform() < self.track_kwargs["jump"]["jump_down_prob"]:
+                jump_height = -jump_height
+        depth_px = int(jump_depth / self.cfg.horizontal_scale)
+        height_value = jump_height / self.cfg.vertical_scale
         wall_thickness_px = int(wall_thickness / self.cfg.horizontal_scale) + 1
         
         if not heightfield_noise is None:
@@ -223,7 +229,7 @@ class BarrierTrack:
             ] += height_value
         if height_value < 0.:
             track_heightfield[
-                depth_px:,
+                (0 if virtual else depth_px):,
                 max(0, wall_thickness_px-1): min(-1, -wall_thickness_px+1),
             ] += height_value
         track_trimesh = convert_heightfield_to_trimesh(
@@ -233,12 +239,15 @@ class BarrierTrack:
             self.cfg.slope_treshold,
         )
         assert not (
-            self.track_kwargs["climb"].get("fake_offset", 0.) != 0. and self.track_kwargs["climb"].get("fake_height", 0.) != 0.), \
+            self.track_kwargs["jump"].get("fake_offset", 0.) != 0. and self.track_kwargs["jump"].get("fake_height", 0.) != 0.), \
             "fake_offset and fake_height cannot be both non-zero"
-        climb_height_ = climb_height + (self.track_kwargs["climb"].get("fake_offset", 0.) if self.track_kwargs["climb"].get("fake_offset", 0.) == 0. else self.track_kwargs["climb"].get("fake_height", 0.))
+        jump_height_ = jump_height + (
+            self.track_kwargs["jump"].get("fake_offset", 0.) \
+            if jump_height > 0. \
+            else 0.)
         block_info = torch.tensor([
-            climb_depth,
-            climb_height_,
+            jump_depth,
+            jump_height_,
         ], dtype= torch.float32, device= self.device)
         height_offset_px = height_value if not virtual else min(height_value, 0)
         return track_trimesh, track_heightfield, block_info, height_offset_px
@@ -399,9 +408,9 @@ class BarrierTrack:
             track_heightfield = heightfield_template + heightfield_noise
         else:
             track_heightfield = heightfield_template.copy()
-        # There is no difference between virtual/non-virtual environment.
+        start_px = int(self.track_kwargs["leap"].get("fake_offset", 0.) / self.cfg.horizontal_scale) + 1 if not virtual else 1
         track_heightfield[
-            1: length_px+1,
+            start_px: length_px+1,
             max(0, wall_thickness_px-1): min(-1, -wall_thickness_px+1),
         ] -= depth_value
         track_trimesh = convert_heightfield_to_trimesh(
@@ -538,13 +547,14 @@ class BarrierTrack:
         self.track_info_map[row_idx, col_idx, 0, 0] = 0
         self.track_info_map[row_idx, col_idx, 0, 1:] = block_info
         self.track_width_map[row_idx, col_idx] = self.env_width - wall_thickness * 2
+        self.block_starting_height_map[row_idx, col_idx, 0] = block_starting_height_px * self.cfg.vertical_scale
         block_starting_height_px += height_offset_px
         
         for obstacle_idx, obstacle_selection in enumerate(obstacle_order):
             obstacle_name = self.track_kwargs["options"][obstacle_selection]
             obstacle_id = self.track_options_id_dict[obstacle_name]
             # call method to generate trimesh and heightfield for each track block.
-            # For example get_climb_track, get_tilt_track
+            # For example get_jump_track, get_tilt_track
             # using `virtual_track` to create non-collision mesh for collocation method in training.
             track_trimesh, track_heightfield, block_info, height_offset_px = getattr(self, "get_" + obstacle_name + "_track")(
                 wall_thickness,
@@ -576,6 +586,7 @@ class BarrierTrack:
             )
             self.track_info_map[row_idx, col_idx, obstacle_idx + 1, 0] = obstacle_id
             self.track_info_map[row_idx, col_idx, obstacle_idx + 1, 1:] = block_info
+            self.block_starting_height_map[row_idx, col_idx, obstacle_idx + 1] = block_starting_height_px * self.cfg.vertical_scale
             block_starting_height_px += height_offset_px
 
         return block_starting_height_px
@@ -711,7 +722,7 @@ class BarrierTrack:
         block_idx = torch.floor(forward_distance / self.env_block_length).to(int) # (N,)
         block_idx_clipped = torch.clip(
             block_idx,
-            0.,
+            0,
             (self.n_blocks_per_track - 1),
         )
         in_track_mask = (track_idx == track_idx_clipped).all(dim= -1) & (block_idx == block_idx_clipped)
@@ -757,6 +768,7 @@ class BarrierTrack:
             else self.env_block_length / 2
         min_x_points_offset = torch.min(volume_points_offset[:, :, 0], dim= -1)[0] # (n,)
         engaging_next_block = ((in_block_distance + min_x_points_offset) > engaging_obstacle_depth) \
+            & (in_block_distance > self.track_kwargs.get("engaging_finish_threshold", 0.)) \
             & (in_block_distance > engaging_next_distance)
 
         # update the engaging track_idx and block_idx if engaging next
@@ -790,7 +802,9 @@ class BarrierTrack:
             0
         ].to(int)
         if self.track_kwargs.get("walk_in_skill_gap", False):
-            between_skill_mask = ((in_block_distance + min_x_points_offset) > engaging_obstacle_depth) & (in_block_distance < engaging_next_distance)
+            between_skill_mask = ((in_block_distance + min_x_points_offset) > engaging_obstacle_depth) \
+                & (in_block_distance > self.track_kwargs.get("engaging_finish_threshold", 0.)) \
+                & (in_block_distance < engaging_next_distance)
             obstacle_id_selection[between_skill_mask] = 0.
             engaging_block_info[between_skill_mask] = 0.
         engaging_obstacle_onehot[
@@ -827,18 +841,35 @@ class BarrierTrack:
             distance_neg_y,
         ], dim= -1) # (n, 2)
 
-    def get_climb_penetration_depths(self,
+    def get_jump_penetration_depths(self,
             block_infos,
             positions_in_block,
             mask_only= False,
         ):
-        in_obstacle_mask = positions_in_block[:, 0] <= block_infos[:, 1]
-        climb_over_mask = positions_in_block[:, 2] > block_infos[:, 2]
-        penetrated_mask = torch.logical_and(in_obstacle_mask, (torch.logical_not(climb_over_mask)))
+        in_up_mask = torch.logical_and(
+            positions_in_block[:, 0] <= block_infos[:, 1],
+            block_infos[:, 2] > 0.,
+        )
+        in_down_mask = torch.logical_and(
+            positions_in_block[:, 0] <= block_infos[:, 1],
+            block_infos[:, 2] < 0.,
+        )
+        jump_over_mask = torch.logical_and(
+            positions_in_block[:, 2] > block_infos[:, 2],
+            positions_in_block[:, 2] > 0, # to avoid the penetration of virtual obstacle in jump down.
+        ) # (n_points,)
+
+        penetrated_mask = torch.logical_and(
+            torch.logical_or(in_up_mask, in_down_mask),
+            (torch.logical_not(jump_over_mask)),
+        )
         if mask_only:
             return penetrated_mask.to(torch.float32)
         penetration_depths_buffer = torch.zeros_like(penetrated_mask, dtype= torch.float32)
-        penetration_depths_buffer[penetrated_mask] = block_infos[penetrated_mask, 2] - positions_in_block[penetrated_mask, 2]
+        penetrate_up_mask = torch.logical_and(penetrated_mask, in_up_mask)
+        penetration_depths_buffer[penetrate_up_mask] = block_infos[penetrate_up_mask, 2] - positions_in_block[penetrate_up_mask, 2]
+        penetrate_down_mask = torch.logical_and(penetrated_mask, in_down_mask)
+        penetration_depths_buffer[penetrate_down_mask] = 0. - positions_in_block[penetrate_down_mask, 2]
         return penetration_depths_buffer
 
     def get_tilt_penetration_depths(self,
@@ -906,10 +937,11 @@ class BarrierTrack:
         forward_distance = sample_points[:, 0] - self.cfg.border_size - (track_idx[:, 0] * self.env_length) # (N,) w.r.t a track
         block_idx = torch.floor(forward_distance / self.env_block_length).to(int) # (N,) 
         block_idx[block_idx >= self.track_info_map.shape[2]] = 0.
-        positions_in_block = torch.cat([
-            (forward_distance % self.env_block_length).unsqueeze(-1),
-            sample_points[:, 1:] - self.env_origins_pyt[track_idx_clipped[:, 0], track_idx_clipped[:, 1]][:, 1:],
-        ], dim= -1)
+        positions_in_block = torch.stack([
+            forward_distance % self.env_block_length,
+            sample_points[:, 1] - self.env_origins_pyt[track_idx_clipped[:, 0], track_idx_clipped[:, 1]][:, 1],
+            sample_points[:, 2] - self.block_starting_height_map[track_idx_clipped[:, 0], track_idx_clipped[:, 1], block_idx],
+        ], dim= -1) # (N, 3) related to the origin of the block, not the track.
         block_infos = self.track_info_map[track_idx_clipped[:, 0], track_idx_clipped[:, 1], block_idx] # (N, 3)
 
         penetration_depths = torch.zeros_like(sample_points[:, 0]) # shape (N,)
@@ -967,23 +999,23 @@ class BarrierTrack:
         return passed_depths
 
     ######## methods to draw visualization #######################
-    def draw_virtual_climb_track(self,
+    def draw_virtual_jump_track(self,
             block_info,
-            xy_origin,
+            block_origin,
         ):
-        climb_depth = block_info[0]
-        climb_height = block_info[1]
+        jump_depth = block_info[1]
+        jump_height = block_info[2]
         geom = gymutil.WireframeBoxGeometry(
-            climb_depth,
+            jump_depth if jump_height > 0 else self.track_kwargs["jump"].get("down_forward_length", 0.1),
             self.env_width,
-            climb_height,
+            jump_height,
             pose= None,
             color= (0, 0, 1),
         )
         pose = gymapi.Transform(gymapi.Vec3(
-            climb_depth/2 + xy_origin[0],
-            self.env_width/2 + xy_origin[1],
-            climb_height/2,
+            jump_depth/2 + block_origin[0],
+            block_origin[1],
+            jump_height/2 + block_origin[2],
         ), r= None)
         gymutil.draw_lines(
             geom,
@@ -995,10 +1027,10 @@ class BarrierTrack:
 
     def draw_virtual_tilt_track(self,
             block_info,
-            xy_origin,
+            block_origin,
         ):
-        tilt_depth = block_info[0]
-        tilt_width = block_info[1]
+        tilt_depth = block_info[1]
+        tilt_width = block_info[2]
         wall_height = self.track_kwargs["tilt"]["wall_height"]
         geom = gymutil.WireframeBoxGeometry(
             tilt_depth,
@@ -1009,9 +1041,9 @@ class BarrierTrack:
         )
         
         pose = gymapi.Transform(gymapi.Vec3(
-            tilt_depth/2 + xy_origin[0],
-            (self.env_width - tilt_width) / 4 + xy_origin[1],
-            wall_height/2,
+            tilt_depth/2 + block_origin[0],
+            block_origin[1] + (self.env_width + tilt_width) / 4,
+            wall_height/2 + block_origin[2],
         ), r= None)
         gymutil.draw_lines(
             geom,
@@ -1021,9 +1053,9 @@ class BarrierTrack:
             pose,
         )
         pose = gymapi.Transform(gymapi.Vec3(
-            tilt_depth/2 + xy_origin[0],
-            self.env_width - (self.env_width - tilt_width) / 4 + xy_origin[1],
-            wall_height/2,
+            tilt_depth/2 + block_origin[0],
+            block_origin[1] - (self.env_width + tilt_width) / 4,
+            wall_height/2 + block_origin[2],
         ), r= None)
         gymutil.draw_lines(
             geom,
@@ -1035,11 +1067,11 @@ class BarrierTrack:
 
     def draw_virtual_crawl_track(self,
             block_info,
-            xy_origin,
+            block_origin,
         ):
-        crawl_depth = block_info[0]
-        crawl_height = block_info[1]
-        wall_height = self.track_kwargs["crawl"]["wall_height"]
+        crawl_depth = block_info[1]
+        crawl_height = block_info[2]
+        wall_height = self.track_kwargs["crawl"]["wall_height"][1] if isinstance(self.track_kwargs["crawl"]["wall_height"], (list, tuple)) else self.track_kwargs["crawl"]["wall_height"]
         geom = gymutil.WireframeBoxGeometry(
             crawl_depth,
             self.env_width,
@@ -1048,9 +1080,9 @@ class BarrierTrack:
             color= (0, 0, 1),
         )
         pose = gymapi.Transform(gymapi.Vec3(
-            crawl_depth/2 + xy_origin[0],
-            self.env_width/2 + xy_origin[1],
-            wall_height/2 + crawl_height,
+            crawl_depth/2 + block_origin[0],
+            block_origin[1],
+            wall_height/2 + crawl_height + block_origin[2],
         ), r= None)
         gymutil.draw_lines(
             geom,
@@ -1062,11 +1094,11 @@ class BarrierTrack:
 
     def draw_virtual_leap_track(self,
             block_info,
-            xy_origin,
+            block_origin,
         ):
         # virtual/non-virtual terrain looks the same when leaping the gap.
         # but the expected height can be visualized
-        leap_length = block_info[0]
+        leap_length = block_info[1]
         expected_height = self.track_kwargs["leap"]["height"]
         geom = gymutil.WireframeBoxGeometry(
             leap_length,
@@ -1076,9 +1108,9 @@ class BarrierTrack:
             color= (0, 0.5, 0.5),
         )
         pose = gymapi.Transform(gymapi.Vec3(
-            leap_length/2 + xy_origin[0],
-            self.env_width/2 + xy_origin[1],
-            expected_height/2,
+            leap_length/2 + block_origin[0],
+            block_origin[1],
+            expected_height/2 + block_origin[2],
         ), r= None)
         gymutil.draw_lines(
             geom,
@@ -1090,12 +1122,12 @@ class BarrierTrack:
         
 
     def draw_virtual_track(self,
-            track_origin_px,
             row_idx,
             col_idx,
         ):
         difficulties = self.get_difficulty(row_idx, col_idx)
         virtual_terrain = difficulties[1]
+        track_origin = self.env_origins[row_idx, col_idx]
 
         for block_idx in range(1, self.track_info_map.shape[2]):
             if virtual_terrain and self.track_kwargs["draw_virtual_terrain"]:
@@ -1104,13 +1136,14 @@ class BarrierTrack:
                     if v == obstacle_id:
                         obstacle_name = k
                         break
-                block_info = self.track_info_map[row_idx, col_idx, block_idx, 1:]
-
-                heightfield_x0 = track_origin_px[0] + self.track_block_resolution[0] * block_idx
-                heightfield_y0 = track_origin_px[1]
+                block_info = self.track_info_map[row_idx, col_idx, block_idx] # (3,)
                 getattr(self, "draw_virtual_" + obstacle_name + "_track")(
                     block_info,
-                    (np.array([heightfield_x0, heightfield_y0]) * self.cfg.horizontal_scale),
+                    np.array([
+                        track_origin[0] + self.track_kwargs["track_block_length"] * block_idx,
+                        track_origin[1],
+                        self.block_starting_height_map[row_idx, col_idx, block_idx].cpu().numpy(),
+                    ]),
                 )
 
     def draw_virtual_terrain(self, viewer):
@@ -1119,7 +1152,6 @@ class BarrierTrack:
         for row_idx in range(self.cfg.num_rows):
             for col_idx in range(self.cfg.num_cols):
                 self.draw_virtual_track(
-                    self.track_origins_px[row_idx, col_idx, :2],
                     row_idx= row_idx,
                     col_idx= col_idx,
                 )

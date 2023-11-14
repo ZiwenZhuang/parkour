@@ -101,7 +101,7 @@ def play(args):
     env_cfg.terrain.curriculum = False
     env_cfg.terrain.BarrierTrack_kwargs["options"] = [
         # "crawl",
-        "climb",
+        "jump",
         # "leap",
         # "tilt",
     ]
@@ -146,7 +146,7 @@ def play(args):
                     logs_root + "/field_a1_oracle/Jun03_00-33-08_Skills_climb_pEnergySubsteps2e-6_rAlive2_pTorqueExceedIndicate2e-1_propDelay0.04-0.05_noPerlinRate0.2_nSubsteps4_envFreq50.0_aScale0.5",
                     logs_root + "/field_a1_oracle/Jun04_01-03-59_Skills_leap_pEnergySubsteps2e-6_rAlive2_pPenV4e-3_pPenD4e-3_pPosY0.20_pYaw0.20_pTorqueExceedSquare1e-3_leapH0.2_propDelay0.04-0.05_noPerlinRate0.2_aScale0.5",
                 ]
-        train_cfg.policy.climb_down_policy_path = logs_root + "/field_a1_oracle/Aug30_16-12-14_Skills_climb_climbDownProb0.5_propDelay0.04-0.05"
+        train_cfg.policy.jump_down_policy_path = logs_root + "/field_a1_oracle/Aug30_16-12-14_Skills_climb_climbDownProb0.5_propDelay0.04-0.05"
         train_cfg.runner.resume = False
         env_cfg.env.use_lin_vel = True
         train_cfg.policy.cmd_vel_mapping = {

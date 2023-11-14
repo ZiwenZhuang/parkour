@@ -40,11 +40,24 @@ class LeggedRobotNoisy(LeggedRobotField):
             self.actions_scaled = self.actions * self.cfg.control.action_scale
             control_type = self.cfg.control.control_type
             if control_type == "P":
-                self.actions_scaled_torque_clipped = self.clip_position_action_by_torque_limit(self.actions_scaled)
+                actions_scaled_torque_clipped = self.clip_position_action_by_torque_limit(self.actions_scaled)
             else:
                 raise NotImplementedError
         else:
-            self.actions_scaled_torque_clipped = self.actions * self.cfg.control.action_scale
+            actions_scaled_torque_clipped = self.actions * self.cfg.control.action_scale
+
+        if getattr(self.cfg.control, "action_delay", False):
+            # always put the latest action at the end of the buffer
+            self.actions_history_buffer = torch.roll(self.actions_history_buffer, shifts= -1, dims= 0)
+            self.actions_history_buffer[-1] = actions_scaled_torque_clipped
+            # get the delayed action
+            self.action_delayed_frames = ((self.current_action_delay / self.dt) + 1).to(int)
+            self.actions_scaled_torque_clipped = self.actions_history_buffer[
+                -self.action_delayed_frames,
+                torch.arange(self.num_envs, device= self.device),
+            ]
+        else:
+            self.actions_scaled_torque_clipped = actions_scaled_torque_clipped
         
         return return_
     
@@ -79,7 +92,10 @@ class LeggedRobotNoisy(LeggedRobotField):
             torch.max(torch.abs(self.torques), dim= -1)[0],
             self.max_torques,
         )
+        ### The set torque limit is usally smaller than the robot dataset
         self.torque_exceed_count_substep[(torch.abs(self.torques) > self.torque_limits).any(dim= -1)] += 1
+        ### Hack to check the torque limit exceeding by your own value.
+        # self.torque_exceed_count_envstep[(torch.abs(self.torques) > 38.).any(dim= -1)] += 1
         
         ### count how many times in the episode the robot is out of dof pos limit (summing all dofs)
         self.out_of_dof_pos_limit_count_substep += self._reward_dof_pos_limits().int()
@@ -108,6 +124,12 @@ class LeggedRobotNoisy(LeggedRobotField):
     def _post_physics_step_callback(self):
         super()._post_physics_step_callback()
 
+        if hasattr(self, "actions_history_buffer"):
+            resampling_time = getattr(self.cfg.control, "action_delay_resampling_time", self.dt)
+            resample_env_ids = (self.episode_length_buf % int(resampling_time / self.dt) == 0).nonzero(as_tuple= False).flatten()
+            if len(resample_env_ids) > 0:
+                self._resample_action_delay(resample_env_ids)
+
         if hasattr(self, "proprioception_buffer"):
             resampling_time = getattr(self.cfg.sensor.proprioception, "latency_resampling_time", self.dt)
             resample_env_ids = (self.episode_length_buf % int(resampling_time / self.dt) == 0).nonzero(as_tuple= False).flatten()
@@ -122,6 +144,14 @@ class LeggedRobotNoisy(LeggedRobotField):
 
         self.torque_exceed_count_envstep[(torch.abs(self.substep_torques) > self.torque_limits).any(dim= 1).any(dim= 1)] += 1
         
+    def _resample_action_delay(self, env_ids):
+        self.current_action_delay[env_ids] = torch_rand_float(
+            self.cfg.control.action_delay_range[0],
+            self.cfg.control.action_delay_range[1],
+            (len(env_ids), 1),
+            device= self.device,
+        ).flatten()
+    
     def _resample_proprioception_latency(self, env_ids):
         self.current_proprioception_latency[env_ids] = torch_rand_float(
             self.cfg.sensor.proprioception.latency_range[0],
@@ -142,6 +172,27 @@ class LeggedRobotNoisy(LeggedRobotField):
         return_ = super()._init_buffers()
         all_obs_components = self.all_obs_components
 
+        if getattr(self.cfg.control, "action_delay", False):
+            assert hasattr(self.cfg.control, "action_delay_range") and hasattr(self.cfg.control, "action_delay_resample_time"), "Please specify action_delay_range and action_delay_resample_time in the config file."
+            """ Used in pre-physics step """
+            self.cfg.control.action_history_buffer_length = int((self.cfg.control.action_delay_range[1] + self.dt) / self.dt)
+            self.actions_history_buffer = torch.zeros(
+                (
+                    self.cfg.control.action_history_buffer_length,
+                    self.num_envs,
+                    self.num_actions,
+                ),
+                dtype= torch.float32,
+                device= self.device,
+            )
+            self.current_action_delay = torch_rand_float(
+                self.cfg.control.action_delay_range[0],
+                self.cfg.control.action_delay_range[1],
+                (self.num_envs, 1),
+                device= self.device,
+            ).flatten()
+            self.action_delayed_frames = ((self.current_action_delay / self.dt) + 1).to(int)
+
         if "proprioception" in all_obs_components and hasattr(self.cfg.sensor, "proprioception"):
             """ Adding proprioception delay buffer """
             self.cfg.sensor.proprioception.buffer_length = int((self.cfg.sensor.proprioception.latency_range[1] + self.dt) / self.dt)
@@ -154,13 +205,13 @@ class LeggedRobotNoisy(LeggedRobotField):
                 dtype= torch.float32,
                 device= self.device,
             )
-            self.proprioception_delayed_frames = torch.ones((self.num_envs,), device= self.device, dtype= int) * self.cfg.sensor.proprioception.buffer_length
             self.current_proprioception_latency = torch_rand_float(
                 self.cfg.sensor.proprioception.latency_range[0],
                 self.cfg.sensor.proprioception.latency_range[1],
                 (self.num_envs, 1),
                 device= self.device,
             ).flatten()
+            self.proprioception_delayed_frames = ((self.current_proprioception_latency / self.dt) + 1).to(int)
 
         if "forward_depth" in all_obs_components and hasattr(self.cfg.sensor, "forward_camera"):
             output_resolution = getattr(self.cfg.sensor.forward_camera, "output_resolution", self.cfg.sensor.forward_camera.resolution)
@@ -220,6 +271,9 @@ class LeggedRobotNoisy(LeggedRobotField):
 
     def _reset_buffers(self, env_ids):
         return_ = super()._reset_buffers(env_ids)
+        if hasattr(self, "actions_history_buffer"):
+            self.actions_history_buffer[:, env_ids] = 0.
+            self.action_delayed_frames[env_ids] = self.cfg.control.action_history_buffer_length
         if hasattr(self, "forward_depth_buffer"):
             self.forward_depth_buffer[:, env_ids] = 0.
             self.forward_depth_delayed_frames[env_ids] = self.cfg.sensor.forward_camera.buffer_length
@@ -537,12 +591,11 @@ class LeggedRobotNoisy(LeggedRobotField):
                 -self.proprioception_delayed_frames,
                 torch.arange(self.num_envs, device= self.device),
             ].clone()
+            ### NOTE: WARN: ERROR: remove this code in final version, no action delay should be used.
+            if getattr(self.cfg.sensor.proprioception, "delay_action_obs", False) or getattr(self.cfg.sensor.proprioception, "delay_privileged_action_obs", False):
+                raise ValueError("LeggedRobotNoisy: No action delay should be used. Please remove these settings")
             # The last-action is not delayed.
-            if getattr(self.cfg.sensor.proprioception, "delay_action_obs", False):
-                not_delayed_mask = torch.randint(0, 1, size= (self.num_envs,), device= self.device).bool()
-                self.proprioception_output[not_delayed_mask, -12:] = self.proprioception_buffer[-1, not_delayed_mask, -12:]
-            else:
-                self.proprioception_output[:, -12:] = self.proprioception_buffer[-1, :, -12:]
+            self.proprioception_output[:, -12:] = self.proprioception_buffer[-1, :, -12:]
             self.proprioception_refreshed = True
         if not hasattr(self.cfg.sensor, "proprioception") or privileged:
             return super()._get_proprioception_obs(privileged)
@@ -572,6 +625,13 @@ class LeggedRobotNoisy(LeggedRobotField):
         exceeded_torques[exceeded_torques < 0.] = 0.
         # sum along decimation axis and dof axis
         return torch.square(exceeded_torques).sum(dim= 1).sum(dim= 1)
+    
+    def _reward_exceed_torque_limits_l1norm(self):
+        """ square function for exceeding part """
+        exceeded_torques = torch.abs(self.substep_torques) - self.torque_limits
+        exceeded_torques[exceeded_torques < 0.] = 0.
+        # sum along decimation axis and dof axis
+        return torch.norm(exceeded_torques, p= 1, dim= -1).sum(dim= 1)
     
     def _reward_exceed_dof_pos_limits(self):
         return self.substep_exceed_dof_pos_limits.to(torch.float32).sum(dim= -1).mean(dim= -1)

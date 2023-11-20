@@ -659,7 +659,7 @@ class LeggedRobotField(LeggedRobot):
         for i, name in enumerate(hip_names):
             self.hip_indices[i] = self.dof_names.index(name)
         
-        return super()._create_envs()
+        return return_
     
     def _process_rigid_shape_props(self, props, env_id):
         props = super()._process_rigid_shape_props(props, env_id)

@@ -27,9 +27,9 @@ This is the tutorial for training the skill policy and distilling the parkour po
 
     The distillation is done in multiprocess. In general, you need at least 2 processes, each with 1 GPU, and can access a shared folder.
 
-    With `python legged/scripts/train.py --headless --task a1_distill` you launch the trainer. The process will prompt you to launch a collector process, where the log directory is corresponding to the task.
+    With `python legged_gym/scripts/train.py --headless --task a1_distill` you launch the trainer. The process will prompt you to launch a collector process, where the log directory is corresponding to the task.
 
-    With `python legged/scripts/collect.py --headless --task a1_distill --load_run {your training run}` you lauched the collector. The process will load the training policy and start collecting the data. The collected data will be saved in the directory prompted by the trainer. Remove it after you finish distillation.
+    With `python legged_gym/scripts/collect.py --headless --task a1_distill --load_run {your training run}` you lauched the collector. The process will load the training policy and start collecting the data. The collected data will be saved in the directory prompted by the trainer. Remove it after you finish distillation.
 
 ### Train a walk policy ###
 

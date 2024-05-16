@@ -107,8 +107,8 @@ def play(args):
     ]
     if "one_obstacle_per_track" in env_cfg.terrain.BarrierTrack_kwargs.keys():
         env_cfg.terrain.BarrierTrack_kwargs.pop("one_obstacle_per_track")
-    env_cfg.terrain.BarrierTrack_kwargs["n_obstacles_per_track"] = 2
-    env_cfg.commands.ranges.lin_vel_x = [1.2, 1.2]
+    env_cfg.terrain.BarrierTrack_kwargs["n_obstacles_per_track"] = 0# 2
+    env_cfg.commands.ranges.lin_vel_x = [1.2, 1.2] # [1.2, 1.2]
     if "distill" in args.task:
         env_cfg.commands.ranges.lin_vel_x = [0.0, 0.0]
         env_cfg.commands.ranges.lin_vel_y = [-0., 0.]

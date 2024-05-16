@@ -750,7 +750,7 @@ class BarrierTrack:
             block_idx,
             0.,
             (self.n_blocks_per_track - 1),
-        )
+        ).to(int)
 
         # compute whether the robot is still in any of the track
         in_track_mask = (track_idx == track_idx_clipped).all(dim= -1) & (block_idx == block_idx_clipped)

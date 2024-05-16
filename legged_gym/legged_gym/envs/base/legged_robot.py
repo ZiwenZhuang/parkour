@@ -578,7 +578,7 @@ class LeggedRobot(BaseTask):
         self.all_root_states = gymtorch.wrap_tensor(actor_root_state)
         self.root_states = self.all_root_states.view(self.num_envs, -1, 13)[:, 0, :] # (num_envs, 13)
         self.all_dof_states = gymtorch.wrap_tensor(dof_state_tensor)
-        self.dof_state = self.all_dof_states.view(self.num_envs, -1, 2)[:, :self.num_dof, :] # (num_envs, 2)
+        self.dof_state = self.all_dof_states.view(self.num_envs, -1, 2)[:, :self.num_dof, :] # (num_envs, 2) position + velocity
         self.dof_pos = self.dof_state.view(self.num_envs, -1, 2)[..., :self.num_dof, 0]
         self.dof_vel = self.dof_state.view(self.num_envs, -1, 2)[..., :self.num_dof, 1]
         self.base_quat = self.root_states[:, 3:7]

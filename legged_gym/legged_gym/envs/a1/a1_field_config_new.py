@@ -1,4 +1,5 @@
 import numpy as np
+import os.path as osp
 from legged_gym.envs.a1.a1_config import A1RoughCfg, A1RoughCfgPPO
 
 class A1FieldCfg( A1RoughCfg ):
@@ -37,12 +38,12 @@ class A1FieldCfg( A1RoughCfg ):
             resolution = [16, 16]
             position = [0.26, 0., 0.03] # position in base_link
             rotation = [0., 0., 0.] # ZYX Euler angle in base_link
-
+    
         class proprioception:
             delay_action_obs = False
             latency_range = [0.0, 0.0]
             latency_resample_time = 2.0 # [s]
-
+    
     class terrain( A1RoughCfg.terrain ):
         mesh_type = "trimesh" # Don't change
         num_rows = 20
@@ -59,7 +60,7 @@ class A1FieldCfg( A1RoughCfg ):
 
         BarrierTrack_kwargs = dict(
             options= [
-                # "climb",
+                # "jump",
                 # "crawl",
                 # "tilt",
                 # "leap",
@@ -68,11 +69,11 @@ class A1FieldCfg( A1RoughCfg ):
             track_block_length= 2., # the x-axis distance from the env origin point
             wall_thickness= (0.04, 0.2), # [m]
             wall_height= -0.05,
-            climb= dict(
+            jump= dict(
                 height= (0.2, 0.6),
                 depth= (0.1, 0.8), # size along the forward axis
                 fake_offset= 0.0, # [m] an offset that make the robot easier to get into the obstacle
-                climb_down_prob= 0.0,
+                jump_down_prob= 0., # probability of jumping down use it in non-virtual terrain
             ),
             crawl= dict(
                 height= (0.25, 0.5),
@@ -97,16 +98,17 @@ class A1FieldCfg( A1RoughCfg ):
             virtual_terrain= False,
             draw_virtual_terrain= True,
             engaging_next_threshold= 1.2,
+            engaging_finish_threshold= 0.,
             curriculum_perlin= False,
-            no_perlin_threshold= 0.0,
+            no_perlin_threshold= 0.1,
         )
 
         TerrainPerlin_kwargs = dict(
-            zScale= [0.1, 0.15],
-            # zScale= 0.1, # Use a constant zScale for training a walk policy
+            zScale= [0.08, 0.15],
+            # zScale= 0.15, # Use a constant zScale for training a walk policy
             frequency= 10,
         )
-
+    
     class commands( A1RoughCfg.commands ):
         heading_command = False
         resampling_time = 10 # [s]
@@ -114,9 +116,6 @@ class A1FieldCfg( A1RoughCfg ):
             lin_vel_x = [-1.0, 1.0]
             lin_vel_y = [0.0, 0.0]
             ang_vel_yaw = [0., 0.]
-            ######## configs for training a walk policy #########
-            # lin_vel_y = [-1., 1.]
-            # ang_vel_yaw = [-1., 1.]
 
     class control( A1RoughCfg.control ):
         stiffness = {'joint': 50.}
@@ -125,10 +124,15 @@ class A1FieldCfg( A1RoughCfg ):
         torque_limits = 25 # override the urdf
         computer_clip_torque = True
         motor_clip_torque = False
+        # action_delay = False # set to True to enable action delay in sim
+        # action_delay_range = [0.002, 0.022] # [s]
+        # action_delay_resample_time = 5.0 # [s]
 
     class asset( A1RoughCfg.asset ):
-        penalize_contacts_on = ["base", "thigh"]
+        penalize_contacts_on = ["base", "thigh", "calf"]
         terminate_after_contacts_on = ["base", "imu"]
+        front_hip_names = ["FR_hip_joint", "FL_hip_joint"]
+        rear_hip_names = ["RR_hip_joint", "RL_hip_joint"]
 
     class termination:
         # additional factors that determines whether to terminates the episode
@@ -145,8 +149,8 @@ class A1FieldCfg( A1RoughCfg ):
             tilt_threshold= 1.5,
         )
         pitch_kwargs = dict(
-            threshold= 1.6, # [rad] # for leap, climb
-            climb_threshold= 1.6,
+            threshold= 1.6, # [rad] # for leap, jump
+            jump_threshold= 1.6,
             leap_threshold= 1.5,
         )
         z_low_kwargs = dict(
@@ -176,7 +180,7 @@ class A1FieldCfg( A1RoughCfg ):
         added_mass_range = [1.0, 3.0]
 
         randomize_friction = True
-        friction_range = [0.0, 1.]
+        friction_range = [0., 2.]
 
         init_base_pos_range = dict(
             x= [0.2, 0.6],
@@ -195,15 +199,34 @@ class A1FieldCfg( A1RoughCfg ):
             # penalty for hardware safety
             exceed_dof_pos_limits = -1e-1
             exceed_torque_limits_i = -2e-1
-        soft_dof_pos_limit = 0.9
+        soft_dof_pos_limit = 0.01
 
     class normalization( A1RoughCfg.normalization ):
         class obs_scales( A1RoughCfg.normalization.obs_scales ):
             forward_depth = 1.
-            base_pose = [0., 0., 1., 1., 1., 1.]
+            base_pose = [0., 0., 0., 1., 1., 1.]
             engaging_block = 1.
+        """ The following action clip is used for tanh policy activation. """
+        # clip_actions_method = "hard"
+        # dof_pos_redundancy = 0.2
+        # clip_actions_low = []
+        # clip_actions_high = []
+        # for sdk_joint_name, sim_joint_name in zip(
+        #     ["Hip", "Thigh", "Calf"] * 4,
+        #     [ # in the order as simulation
+        #         "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint",
+        #         "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint",
+        #         "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint",
+        #         "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint",
+        #     ],
+        # ): # This setting is only for position control.
+        #     clip_actions_low.append( (A1RoughCfg.asset.sdk_dof_range[sdk_joint_name + "_min"] + dof_pos_redundancy - A1RoughCfg.init_state.default_joint_angles[sim_joint_name]) / a1_action_scale )
+        #     clip_actions_high.append( (A1RoughCfg.asset.sdk_dof_range[sdk_joint_name + "_max"] - dof_pos_redundancy - A1RoughCfg.init_state.default_joint_angles[sim_joint_name]) / a1_action_scale )
+        # del dof_pos_redundancy, sdk_joint_name, sim_joint_name # This is not intended to be an attribute of normalization
+        """ The above action clip is used for tanh policy activation. """
 
     class noise( A1RoughCfg.noise ):
+        add_noise = False # disable internal uniform +- 1 noise, and no noise in proprioception
         class noise_scales( A1RoughCfg.noise.noise_scales ):
             forward_depth = 0.1
             base_pose = 1.0
@@ -244,6 +267,7 @@ class A1FieldCfg( A1RoughCfg ):
         no_moveup_when_fall = False
         # chosen heuristically, please refer to `LeggedRobotField._get_terrain_curriculum_move` with fixed body_measure_points
 
+logs_root = osp.join(osp.dirname(osp.dirname(osp.dirname(osp.dirname(osp.abspath(__file__))))), "logs")
 class A1FieldCfgPPO( A1RoughCfgPPO ):
     class algorithm( A1RoughCfgPPO.algorithm ):
         entropy_coef = 0.01
@@ -252,12 +276,13 @@ class A1FieldCfgPPO( A1RoughCfgPPO ):
     class policy( A1RoughCfgPPO.policy ):
         rnn_type = 'gru'
         mu_activation = "tanh"
-
+    
     class runner( A1RoughCfgPPO.runner ):
         policy_class_name = "ActorCriticRecurrent"
         experiment_name = "field_a1"
-        run_name = "".join(["WalkingBase",
-        ("_pEnergySubsteps" + np.format_float_scientific(-A1FieldCfg.rewards.scales.legs_energy_substeps, precision=1, exp_digits=1, trim="-") if A1FieldCfg.rewards.scales.legs_energy_substeps != 0 else ""),
+        resume = False
+        
+        run_name = "".join(["WalkForward",
         ("_propDelay{:.2f}-{:.2f}".format(
                 A1FieldCfg.sensor.proprioception.latency_range[0],
                 A1FieldCfg.sensor.proprioception.latency_range[1],
@@ -274,4 +299,4 @@ class A1FieldCfgPPO( A1RoughCfgPPO ):
         resume = False
         max_iterations = 10000
         save_interval = 500
-
+    

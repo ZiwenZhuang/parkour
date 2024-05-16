@@ -1,6 +1,6 @@
 import numpy as np
 import os.path as osp
-from legged_gym.envs.a1.a1_field_config import A1FieldCfg, A1FieldCfgPPO
+from legged_gym.envs.a1.a1_field_config_new import A1FieldCfg, A1FieldCfgPPO
 from legged_gym.utils.helpers import merge_dict
 
 class A1RemoteCfg( A1FieldCfg ):

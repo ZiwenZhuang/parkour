@@ -1,5 +1,5 @@
 import numpy as np
-from legged_gym.envs.a1.a1_field_config_new import A1FieldCfg, A1FieldCfgPPO
+from legged_gym.envs.a1.a1_field_config import A1FieldCfg, A1FieldCfgPPO
 from legged_gym.utils.helpers import merge_dict
 
 class A1LeapCfg( A1FieldCfg ):
@@ -26,7 +26,7 @@ class A1LeapCfg( A1FieldCfg ):
                 depth= (0.4, 0.8),
                 height= 0.2,
             ),
-            virtual_terrain= False, # Change this to False for real terrain
+            virtual_terrain= False,#True, # Change this to False for real terrain
             no_perlin_threshold= 0.06,
         ))
 
@@ -94,8 +94,9 @@ class A1LeapCfgPPO( A1FieldCfgPPO ):
         ("_virtual" if A1LeapCfg.terrain.BarrierTrack_kwargs["virtual_terrain"] else ""),
         ])
         resume = True
-        load_run = "{Your traind walking model directory}"
-        load_run = "{Your virtually trained leap model directory}"
+        # load_run = "{Your traind walking model directory}"
+        load_run = "May15_21-34-27_Skillleap_pEnergySubsteps-1e-06_virtual"#"May15_17-07-38_WalkingBase_pEnergySubsteps2e-5_aScale0.5"
+        # load_run = "{Your virtually trained leap model directory}"
         max_iterations = 20000
         save_interval = 500
     

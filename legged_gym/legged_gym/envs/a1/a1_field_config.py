@@ -87,7 +87,7 @@ class A1FieldCfg( A1RoughCfg ):
                 wall_height= 0.5,
             ),
             leap= dict(
-                length= (0.2, 1.0),
+                length= (1.0, 1.0),
                 depth= (0.4, 0.8),
                 height= 0.2,
             ),
@@ -108,6 +108,8 @@ class A1FieldCfg( A1RoughCfg ):
         )
 
     class commands( A1RoughCfg.commands ):
+        curriculum = True
+        max_curriculum = 3.
         heading_command = False
         resampling_time = 10 # [s]
         class ranges( A1RoughCfg.commands.ranges ):
@@ -274,4 +276,3 @@ class A1FieldCfgPPO( A1RoughCfgPPO ):
         resume = False
         max_iterations = 10000
         save_interval = 500
-

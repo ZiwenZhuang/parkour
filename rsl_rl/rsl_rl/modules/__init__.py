@@ -53,6 +53,8 @@ def build_actor_critic(env, policy_class_name, policy_cfg):
         policy_cfg["num_critic_obs"] = num_critic_obs
     if not "num_actions" in policy_cfg:
         policy_cfg["num_actions"] = env.num_actions
+    if not "lin_vel_x" in policy_cfg:
+        policy_cfg["lin_vel_x"] = env.command_ranges["lin_vel_x"]
     
     actor_critic: ActorCritic = actor_critic_class(**policy_cfg)
 

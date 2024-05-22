@@ -60,13 +60,14 @@ class A1LeapCfg( A1FieldCfg ):
     class rewards( A1FieldCfg.rewards ):
         class scales:
             tracking_ang_vel = 0.05
-            world_vel_l2norm = -1.
+            # world_vel_l2norm = -1.
             legs_energy_substeps = -1e-6
             alive = 2.
             penetrate_depth = -4e-3
             penetrate_volume = -4e-3
             exceed_dof_pos_limits = -1e-1
             exceed_torque_limits_i = -2e-1
+            # track_predict_vel_l2norm = -1.
 
     class curriculum( A1FieldCfg.curriculum ):
         penetrate_volume_threshold_harder = 9000

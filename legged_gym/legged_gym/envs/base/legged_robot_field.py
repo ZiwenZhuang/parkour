@@ -95,6 +95,17 @@ class LeggedRobotField(LeggedRobot):
         return camera_handle
 
     ##### Working on simulation steps #####
+    def step(self, actions, velocity=None):
+        """ Apply actions, simulate, call self.post_physics_step()
+
+        Args:
+            actions (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
+        """
+        if velocity is not None:
+            self.commands[:, 0] = velocity
+        super().step(actions)
+        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
+
     def pre_physics_step(self, actions):
         self.volume_sample_points_refreshed = False
         actions_preprocessed = False

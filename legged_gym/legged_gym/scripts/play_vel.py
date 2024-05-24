@@ -199,6 +199,9 @@ def play(args):
     )
     agent_model = ppo_runner.alg.actor_critic
     policy = ppo_runner.get_inference_policy(device=env.device)
+    velocity_planner = ppo_runner.alg.velocity_planner
+    velocity_planner.eval()
+
     ### get obs_slice to read the obs
     # obs_slice = get_obs_slice(env.obs_segments, "engaging_block")
     
@@ -236,9 +239,14 @@ def play(args):
         if "obs_slice" in locals().keys():
             obs_component = obs[:, obs_slice[0]].reshape(-1, *obs_slice[1])
             print(obs_component[robot_index])
+        vel_obs = torch.cat([obs[:, :9], obs[:, 12:]], dim=1)
+        velocity = velocity_planner(vel_obs)
+        print(velocity)
+        print(env_cfg.commands.ranges.lin_vel_x)
+        velocity = torch.clip(velocity, env_cfg.commands.ranges.lin_vel_x[0], env_cfg.commands.ranges.lin_vel_x[1])
         actions = policy(obs.detach())
         teacher_actions = actions
-        obs, critic_obs, rews, dones, infos = env.step(actions.detach())
+        obs, critic_obs, rews, dones, infos = env.step(actions.detach(), velocity)
         if RECORD_FRAMES:
             filename = os.path.join(
                 os.path.abspath("logs/images/"),
@@ -261,7 +269,7 @@ def play(args):
                 env.gym.set_actor_root_state_tensor(env.sim, gymtorch.unwrap_tensor(env.all_root_states))
             if ui_event.action == "action_jitter" and ui_event.value > 0:
                 # assuming wrong action is taken
-                obs, critic_obs, rews, dones, infos = env.step(torch.tanh(torch.randn_like(actions)))
+                obs, critic_obs, rews, dones, infos = env.step(torch.tanh(torch.randn_like(actions)), velocity)
             if ui_event.action == "exit" and ui_event.value > 0:
                 print("exit")
                 exit(0)

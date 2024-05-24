@@ -22,11 +22,11 @@ class A1LeapCfg( A1FieldCfg ):
                 "leap",
             ],
             leap= dict(
-                length= (0.2, 1.0),
+                length= (0.5, 1.5),
                 depth= (0.4, 0.8),
                 height= 0.2,
             ),
-            virtual_terrain= False,#True, # Change this to False for real terrain
+            virtual_terrain= True, # Change this to False for real terrain
             no_perlin_threshold= 0.06,
         ))
 
@@ -36,7 +36,7 @@ class A1LeapCfg( A1FieldCfg ):
     
     class commands( A1FieldCfg.commands ):
         class ranges( A1FieldCfg.commands.ranges ):
-            lin_vel_x = [1.0, 1.5]
+            lin_vel_x = [1.0, 4.0]
             lin_vel_y = [0.0, 0.0]
             ang_vel_yaw = [0., 0.]
 
@@ -60,7 +60,7 @@ class A1LeapCfg( A1FieldCfg ):
     class rewards( A1FieldCfg.rewards ):
         class scales:
             tracking_ang_vel = 0.05
-            # world_vel_l2norm = -1.
+            world_vel_l2norm = -1.
             legs_energy_substeps = -1e-6
             alive = 2.
             penetrate_depth = -4e-3
@@ -96,7 +96,8 @@ class A1LeapCfgPPO( A1FieldCfgPPO ):
         ])
         resume = True
         # load_run = "{Your traind walking model directory}"
-        load_run = "May15_21-34-27_Skillleap_pEnergySubsteps-1e-06_virtual"#"May15_17-07-38_WalkingBase_pEnergySubsteps2e-5_aScale0.5"
+        load_run = "May16_18-12-08_WalkingBase_pEnergySubsteps2e-5_aScale0.5"
+        # load_run = "May15_21-34-27_Skillleap_pEnergySubsteps-1e-06_virtual"#"May15_17-07-38_WalkingBase_pEnergySubsteps2e-5_aScale0.5"
         # load_run = "{Your virtually trained leap model directory}"
         max_iterations = 20000
         save_interval = 500

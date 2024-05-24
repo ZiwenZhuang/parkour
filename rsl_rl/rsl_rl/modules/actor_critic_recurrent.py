@@ -62,15 +62,6 @@ class ActorCriticRecurrent(ActorCritic):
 
         activation = get_activation(activation)
 
-        self.velocity_planner = nn.Sequential(
-            nn.Linear(num_actor_obs-3, 256),
-            nn.ELU(),
-            nn.Linear(256, 128),
-            nn.ELU(),
-            nn.Linear(128, 1),
-            nn.Tanh()
-        )
-
         self.lin_vel_x = kwargs["lin_vel_x"]
         self.memory_a = Memory(num_actor_obs, type=rnn_type, num_layers=rnn_num_layers, hidden_size=rnn_hidden_size)
         self.memory_c = Memory(num_critic_obs, type=rnn_type, num_layers=rnn_num_layers, hidden_size=rnn_hidden_size)
@@ -82,16 +73,19 @@ class ActorCriticRecurrent(ActorCritic):
         self.memory_a.reset(dones)
         self.memory_c.reset(dones)
 
-    def act(self, observations, masks=None, hidden_states=None):
-        vel_obs = torch.cat([observations[:, :9], observations[:, 12:]], dim=1)
-        velocity = self.velocity_planner(vel_obs)
-        velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
-        self.velocity = velocity
-        observations[:, 9] = velocity
+    def act(self, observations, masks=None, hidden_states=None, velocity=None):
+        if velocity is not None:
+            observations[..., 9] = velocity.squeeze()
+        # vel_obs = torch.cat([observations[:, :9], observations[:, 12:]], dim=1)
+        # velocity = self.velocity_planner(vel_obs)
+        # velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
+        # observations[:, 9] = velocity
         input_a = self.memory_a(observations, masks, hidden_states)
-        return super().act(input_a.squeeze(0))
+        return super().act(input_a.squeeze(0)), velocity.squeeze().detach()
 
-    def act_inference(self, observations):
+    def act_inference(self, observations, velocity=None):
+        if velocity is not None:
+            observations[:, 9] = velocity
         input_a = self.memory_a(observations)
         return super().act_inference(input_a.squeeze(0))
 

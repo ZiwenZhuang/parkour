@@ -35,6 +35,7 @@ import statistics
 
 from torch.utils.tensorboard import SummaryWriter
 import torch
+import torch.nn as nn
 
 import rsl_rl.algorithms as algorithms
 import rsl_rl.modules as modules
@@ -61,8 +62,17 @@ class OnPolicyRunner:
             self.policy_cfg,
         ).to(self.device)
 
+        velocity_planner = nn.Sequential(
+            nn.Linear(env.num_obs-3, 256),
+            nn.ELU(),
+            nn.Linear(256, 128),
+            nn.ELU(),
+            nn.Linear(128, 1)
+        ).to(self.device)
+
         alg_class = getattr(algorithms, self.cfg["algorithm_class_name"]) # PPO
-        self.alg: algorithms.PPO = alg_class(actor_critic, device=self.device, **self.alg_cfg)
+
+        self.alg: algorithms.PPO = alg_class(actor_critic, velocity_planner, device=self.device, **self.alg_cfg)
         
         self.num_steps_per_env = self.cfg["num_steps_per_env"]
         self.save_interval = self.cfg["save_interval"]
@@ -141,8 +151,8 @@ class OnPolicyRunner:
         self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
 
     def rollout_step(self, obs, critic_obs):
-        actions = self.alg.act(obs, critic_obs)
-        obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
+        actions, velocity = self.alg.act(obs, critic_obs)
+        obs, privileged_obs, rewards, dones, infos = self.env.step(actions, velocity)
         critic_obs = privileged_obs if privileged_obs is not None else obs
         obs, critic_obs, rewards, dones = obs.to(self.device), critic_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
         self.alg.process_env_step(rewards, dones, infos)
@@ -229,6 +239,7 @@ class OnPolicyRunner:
         run_state_dict = {
             'model_state_dict': self.alg.actor_critic.state_dict(),
             'optimizer_state_dict': self.alg.optimizer.state_dict(),
+            'velocity_optimizer_state_dict': self.alg.velocity_optimizer.state_dict(),
             'iter': self.current_learning_iteration,
             'infos': infos,
         }
@@ -240,7 +251,9 @@ class OnPolicyRunner:
         loaded_dict = torch.load(path)
         self.alg.actor_critic.load_state_dict(loaded_dict['model_state_dict'])
         if load_optimizer and "optimizer_state_dict" in loaded_dict:
-            self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict'])
+            self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict'], )
+        if load_optimizer and "velocity_optimizer_state_dict" in loaded_dict:
+            self.alg.velocity_optimizer.load_state_dict(loaded_dict['velocity_optimizer_state_dict'], )
         if "lr_scheduler_state_dict" in loaded_dict:
             if not hasattr(self.alg, "lr_scheduler"):
                 print("Warning: lr_scheduler_state_dict found in checkpoint but no lr_scheduler in algorithm. Ignoring.")

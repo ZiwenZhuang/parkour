@@ -32,6 +32,7 @@ from collections import defaultdict
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import copy
 
 from rsl_rl.modules import ActorCritic
 from rsl_rl.storage import RolloutStorage
@@ -40,6 +41,7 @@ class PPO:
     actor_critic: ActorCritic
     def __init__(self,
                  actor_critic,
+                 velocity_planner,
                  num_learning_epochs=1,
                  num_mini_batches=1,
                  clip_param=0.2,
@@ -55,6 +57,7 @@ class PPO:
                  schedule="fixed",
                  desired_kl=0.01,
                  device='cpu',
+                 **kwargs
                  ):
 
         self.device = device
@@ -69,6 +72,11 @@ class PPO:
         self.storage = None # initialized later
         self.optimizer = getattr(optim, optimizer_class_name)(self.actor_critic.parameters(), lr=learning_rate)
         self.transition = RolloutStorage.Transition()
+
+        # Velocity Planner
+        self.velocity_planner = velocity_planner
+        self.velocity_optimizer = getattr(optim, optimizer_class_name)(self.velocity_planner.parameters(), lr=learning_rate)
+        self.lin_vel_x = kwargs.get('lin_vel_x', None)
 
         # PPO parameters
         self.clip_param = clip_param
@@ -98,7 +106,12 @@ class PPO:
         if self.actor_critic.is_recurrent:
             self.transition.hidden_states = self.actor_critic.get_hidden_states()
         # Compute the actions and values
-        self.transition.actions = self.actor_critic.act(obs).detach()
+        vel_obs = torch.cat([obs[:, :9], obs[:, 12:]], dim=1)
+        velocity = self.velocity_planner(vel_obs)
+        if self.lin_vel_x is not None:
+            velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
+
+        self.transition.actions = self.actor_critic.act(obs, velocity=velocity)[0].detach()
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.actor_critic.action_mean.detach()
@@ -106,7 +119,7 @@ class PPO:
         # need to record obs and critic_obs before env.step()
         self.transition.observations = obs
         self.transition.critic_observations = critic_obs
-        return self.transition.actions
+        return self.transition.actions, velocity.squeeze().detach()
     
     def process_env_step(self, rewards, dones, infos):
         self.transition.rewards = rewards.clone()
@@ -146,9 +159,11 @@ class PPO:
 
                 # Gradient step
                 self.optimizer.zero_grad()
+                self.velocity_optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
                 self.optimizer.step()
+                self.velocity_optimizer.step()
 
         num_updates = self.num_learning_epochs * self.num_mini_batches
         for k in mean_losses.keys():
@@ -162,9 +177,16 @@ class PPO:
         return mean_losses, average_stats
 
     def compute_losses(self, minibatch):
-        self.actor_critic.act(minibatch.obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[0])
+        obs = copy.deepcopy(minibatch.obs)
+        # print(obs.shape)
+        vel_obs = torch.cat([obs[..., :9], obs[..., 12:]], dim=-1)
+        # print(vel_obs.shape)
+        velocity = self.velocity_planner(vel_obs)
+        if self.lin_vel_x is not None:
+            velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
+        self.actor_critic.act(obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[0], velocity=velocity)
         actions_log_prob_batch = self.actor_critic.get_actions_log_prob(minibatch.actions)
-        value_batch = self.actor_critic.evaluate(minibatch.critic_obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[1])
+        value_batch = self.actor_critic.evaluate(obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[1])
         mu_batch = self.actor_critic.action_mean
         sigma_batch = self.actor_critic.action_std
         try:

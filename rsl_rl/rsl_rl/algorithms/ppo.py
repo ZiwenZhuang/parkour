@@ -77,6 +77,7 @@ class PPO:
         self.velocity_planner = velocity_planner
         self.velocity_optimizer = getattr(optim, optimizer_class_name)(self.velocity_planner.parameters(), lr=learning_rate)
         self.lin_vel_x = kwargs.get('lin_vel_x', None)
+        self.command_scale = kwargs.get('command_scale', 2.0)
 
         # PPO parameters
         self.clip_param = clip_param
@@ -106,11 +107,11 @@ class PPO:
         if self.actor_critic.is_recurrent:
             self.transition.hidden_states = self.actor_critic.get_hidden_states()
         # Compute the actions and values
-        vel_obs = torch.cat([obs[:, :9], obs[:, 12:]], dim=1)
+        vel_obs = torch.cat([obs[..., :9], obs[..., 12:]], dim=-1)
         velocity = self.velocity_planner(vel_obs)
         if self.lin_vel_x is not None:
             velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
-
+        velocity *= self.command_scale
         self.transition.actions = self.actor_critic.act(obs, velocity=velocity)[0].detach()
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()

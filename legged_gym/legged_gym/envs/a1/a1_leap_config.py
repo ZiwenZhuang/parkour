@@ -10,7 +10,8 @@ class A1LeapCfg( A1FieldCfg ):
     #         delay_action_obs = True
     #         latency_range = [0.04-0.0025, 0.04+0.0075]
     #### uncomment the above to train non-virtual terrain
-    
+    class env(A1FieldCfg.env):
+        num_envs = 4
     class terrain( A1FieldCfg.terrain ):
         max_init_terrain_level = 2
         border_size = 5
@@ -68,6 +69,7 @@ class A1LeapCfg( A1FieldCfg ):
             exceed_dof_pos_limits = -1e-1
             exceed_torque_limits_i = -2e-1
             # track_predict_vel_l2norm = -1.
+        soft_dof_pos_limit = 0.9
 
     class curriculum( A1FieldCfg.curriculum ):
         penetrate_volume_threshold_harder = 9000
@@ -80,6 +82,8 @@ class A1LeapCfgPPO( A1FieldCfgPPO ):
     class algorithm( A1FieldCfgPPO.algorithm ):
         entropy_coef = 0.0
         clip_min_std = 0.2
+        lin_vel_x = [2.0, 3.0]
+        command_scale = 2.0
     
     class runner( A1FieldCfgPPO.runner ):
         policy_class_name = "ActorCriticRecurrent"

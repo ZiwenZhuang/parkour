@@ -33,6 +33,8 @@ import torch
 import numpy as np
 
 from rsl_rl.utils import split_and_pad_trajectories
+from rsl_rl.utils.collections import is_namedarraytuple
+from rsl_rl.utils.buffer import buffer_from_example, buffer_method, buffer_swap, buffer_expand
 
 class RolloutStorage:
     class Transition:
@@ -61,7 +63,7 @@ class RolloutStorage:
         "old_actions_log_prob",
         "old_mu",
         "old_sigma",
-        "hid_states",
+        "hidden_states",
         "masks",
     ])
 
@@ -95,8 +97,7 @@ class RolloutStorage:
         self.num_envs = num_envs
 
         # rnn
-        self.saved_hidden_states_a = None
-        self.saved_hidden_states_c = None
+        self.saved_hidden_states = None
 
         self.step = 0
 
@@ -116,20 +117,21 @@ class RolloutStorage:
         self.step += 1
 
     def _save_hidden_states(self, hidden_states):
-        if hidden_states is None or hidden_states==(None, None):
+        """ Assuming hidden_states is a torch tensor or a namedarraytuple of torch tensor """
+        if hidden_states is None:
             return
-        # make a tuple out of GRU hidden state sto match the LSTM format
-        hid_a = hidden_states[0] if isinstance(hidden_states[0], tuple) else (hidden_states[0],)
-        hid_c = hidden_states[1] if isinstance(hidden_states[1], tuple) else (hidden_states[1],)
+        if is_namedarraytuple(hidden_states):
+            try:
+                leading_dims = hidden_states.get_leading_dims()
+            except AttributeError as e:
+                if "None" in str(e):
+                    return
 
         # initialize if needed 
-        if self.saved_hidden_states_a is None:
-            self.saved_hidden_states_a = [torch.zeros(self.observations.shape[0], *hid_a[i].shape, device=self.device) for i in range(len(hid_a))]
-            self.saved_hidden_states_c = [torch.zeros(self.observations.shape[0], *hid_c[i].shape, device=self.device) for i in range(len(hid_c))]
+        if self.saved_hidden_states is None:
+            self.saved_hidden_states = buffer_from_example(hidden_states, self.observations.shape[0])
         # copy the states
-        for i in range(len(hid_a)):
-            self.saved_hidden_states_a[i][self.step].copy_(hid_a[i])
-            self.saved_hidden_states_c[i][self.step].copy_(hid_c[i])
+        self.saved_hidden_states[self.step] = hidden_states
 
 
     def clear(self):
@@ -163,50 +165,25 @@ class RolloutStorage:
         batch_size = self.num_envs * self.num_transitions_per_env
         mini_batch_size = batch_size // num_mini_batches
         indices = torch.randperm(num_mini_batches*mini_batch_size, requires_grad=False, device=self.device)
-
-        observations = self.observations.flatten(0, 1)
-        if self.privileged_observations is not None:
-            critic_observations = self.privileged_observations.flatten(0, 1)
-        else:
-            critic_observations = observations
-
-        actions = self.actions.flatten(0, 1)
-        values = self.values.flatten(0, 1)
-        returns = self.returns.flatten(0, 1)
-        old_actions_log_prob = self.actions_log_prob.flatten(0, 1)
-        advantages = self.advantages.flatten(0, 1)
-        old_mu = self.mu.flatten(0, 1)
-        old_sigma = self.sigma.flatten(0, 1)
+        T_indices = (indices // self.num_envs).to(torch.long)
+        B_indices = (indices % self.num_envs).to(torch.long)
 
         for epoch in range(num_epochs):
             for i in range(num_mini_batches):
 
                 start = i*mini_batch_size
                 end = (i+1)*mini_batch_size
-                batch_idx = indices[start:end]
+                T_idx = T_indices[start:end]
+                B_idx = B_indices[start:end]
 
-                obs_batch = observations[batch_idx]
-                critic_observations_batch = critic_observations[batch_idx]
-                actions_batch = actions[batch_idx]
-                target_values_batch = values[batch_idx]
-                returns_batch = returns[batch_idx]
-                old_actions_log_prob_batch = old_actions_log_prob[batch_idx]
-                advantages_batch = advantages[batch_idx]
-                old_mu_batch = old_mu[batch_idx]
-                old_sigma_batch = old_sigma[batch_idx]
-                yield RolloutStorage.MiniBatch(
-                    obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
-                    old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None,
-                )
+                yield self.get_minibatch_from_indices(T_idx, B_idx)
 
     # for RNNs only
     def reccurent_mini_batch_generator(self, num_mini_batches, num_epochs=8):
 
-        padded_obs_trajectories, trajectory_masks = split_and_pad_trajectories(self.observations, self.dones)
+        self._padded_obs_trajectories, self._trajectory_masks = split_and_pad_trajectories(self.observations, self.dones)
         if self.privileged_observations is not None: 
-            padded_critic_obs_trajectories, _ = split_and_pad_trajectories(self.privileged_observations, self.dones)
-        else: 
-            padded_critic_obs_trajectories = padded_obs_trajectories
+            self._padded_critic_obs_trajectories, _ = split_and_pad_trajectories(self.privileged_observations, self.dones)
 
         mini_batch_size = self.num_envs // num_mini_batches
         for ep in range(num_epochs):
@@ -222,36 +199,76 @@ class RolloutStorage:
                 trajectories_batch_size = torch.sum(last_was_done[:, start:stop])
                 last_traj = first_traj + trajectories_batch_size
                 
-                masks_batch = trajectory_masks[:, first_traj:last_traj]
-                obs_batch = padded_obs_trajectories[:, first_traj:last_traj]
-                critic_obs_batch = padded_critic_obs_trajectories[:, first_traj:last_traj]
-
-                actions_batch = self.actions[:, start:stop]
-                old_mu_batch = self.mu[:, start:stop]
-                old_sigma_batch = self.sigma[:, start:stop]
-                returns_batch = self.returns[:, start:stop]
-                advantages_batch = self.advantages[:, start:stop]
-                values_batch = self.values[:, start:stop]
-                old_actions_log_prob_batch = self.actions_log_prob[:, start:stop]
-
-                # reshape to [num_envs, time, num layers, hidden dim] (original shape: [time, num_layers, num_envs, hidden_dim])
-                # then take only time steps after dones (flattens num envs and time dimensions),
-                # take a batch of trajectories and finally reshape back to [num_layers, batch, hidden_dim]
-                last_was_done = last_was_done.permute(1, 0)
-                hid_a_batch = [ saved_hidden_states.permute(2, 0, 1, 3)[last_was_done][first_traj:last_traj].transpose(1, 0).contiguous()
-                                for saved_hidden_states in self.saved_hidden_states_a ] 
-                hid_c_batch = [ saved_hidden_states.permute(2, 0, 1, 3)[last_was_done][first_traj:last_traj].transpose(1, 0).contiguous()
-                                for saved_hidden_states in self.saved_hidden_states_c ]
-                # remove the tuple for GRU
-                hid_a_batch = hid_a_batch[0] if len(hid_a_batch)==1 else hid_a_batch
-                hid_c_batch = hid_c_batch[0] if len(hid_c_batch)==1 else hid_a_batch
-
-                yield RolloutStorage.MiniBatch(
-                    obs_batch, critic_obs_batch, actions_batch, values_batch, advantages_batch, returns_batch, \
-                    old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (hid_a_batch, hid_c_batch), masks_batch,
+                yield self.get_minibatch_from_indices(
+                    slice(None),
+                    slice(start, stop),
+                    padded_B_slice= slice(first_traj, last_traj),
+                    prev_done_mask= last_was_done,
                 )
                 
                 first_traj = last_traj
+
+    def get_minibatch_from_indices(self, T_slice, B_slice, padded_B_slice= None, prev_done_mask= None):
+        """ Extract minibatch based on selected indices/slice.
+        An independent method allows override by subclasses.
+        Args:
+            - padded_B_slice: For recurrent trajectories, the observations are already expanded and padded with zeros.
+            - prev_done_mask: For recurrent trajectories, 
+        Outputs:
+            - MiniBatch:
+                only batch dimension if not padded_B_slice (non-recurrent case)
+                with time, batch dimension if padded_B_slice (recurrent case)
+        """
+        if padded_B_slice is None:
+            obs_batch = self.observations[T_slice, B_slice]
+            critic_obs_batch = obs_batch if self.privileged_observations is None else self.privileged_observations[T_slice, B_slice]
+            hid_batch = None
+            obs_mask_batch = None
+        else:
+            obs_batch = self._padded_obs_trajectories[T_slice, padded_B_slice]
+            critic_obs_batch = obs_batch if self.privileged_observations is None else self._padded_critic_obs_trajectories[T_slice, padded_B_slice]
+            
+            # reshape to [num_envs, time, num layers, hidden dim] (original shape: [time, num_layers, num_envs, hidden_dim])
+            # then take only time steps after dones (flattens num envs and time dimensions),
+            # take a batch of trajectories and finally reshape back to [num_layers, batch, hidden_dim]
+            prev_done_mask = prev_done_mask.permute(1, 0) # (T, B) -> (B, T)
+            hid_batch = buffer_method(
+                buffer_method(
+                    buffer_method(self.saved_hidden_states, "permute", 2, 0, 1, 3)[prev_done_mask][padded_B_slice],
+                    "transpose", 1, 0
+                ),
+                "contiguous",
+            )
+            obs_mask_batch = self._trajectory_masks[T_slice, padded_B_slice]
+ 
+        action_batch = self.actions[T_slice, B_slice]
+        target_value_batch = self.values[T_slice, B_slice]
+        return_batch = self.returns[T_slice, B_slice]
+        old_action_log_prob_batch = self.actions_log_prob[T_slice, B_slice]
+        advantage_batch = self.advantages[T_slice, B_slice]
+        old_mu_batch = self.mu[T_slice, B_slice]
+        old_sigma_batch = self.sigma[T_slice, B_slice]
+
+        if padded_B_slice is None:
+            # flatten the trajectory sample if not recurrent
+            obs_batch = obs_batch.flatten(0, 1)
+            critic_obs_batch = critic_obs_batch.flatten(0, 1)
+            
+            action_batch = action_batch.flatten(0, 1)
+            target_value_batch = target_value_batch.flatten(0, 1)
+            return_batch = return_batch.flatten(0, 1)
+            old_action_log_prob_batch = old_action_log_prob_batch.flatten(0, 1)
+            advantage_batch = advantage_batch.flatten(0, 1)
+            old_mu_batch = old_mu_batch.flatten(0, 1)
+            old_sigma_batch = old_sigma_batch.flatten(0, 1)
+
+        return RolloutStorage.MiniBatch(
+            obs_batch, critic_obs_batch,
+            action_batch,
+            target_value_batch, advantage_batch, return_batch,
+            old_action_log_prob_batch, old_mu_batch, old_sigma_batch,
+            hid_batch, obs_mask_batch,
+        )
 
 class QueueRolloutStorage(RolloutStorage):
     def __init__(self,
@@ -337,15 +354,13 @@ class QueueRolloutStorage(RolloutStorage):
         ], dim= 0).contiguous()
 
         # For hidden_states
-        if not self.saved_hidden_states_a is None:
-            self.saved_hidden_states_a = [ torch.cat([
-                saved_hidden_states,
-                torch.zeros(expand_size, *saved_hidden_states.shape[1:], device=self.device),
-            ], dim= 0).contiguous() for saved_hidden_states in self.saved_hidden_states_a ]
-            self.saved_hidden_states_c = [ torch.cat([
-                saved_hidden_states,
-                torch.zeros(expand_size, *saved_hidden_states.shape[1:], device=self.device),
-            ], dim= 0).contiguous() for saved_hidden_states in self.saved_hidden_states_c ]
+        if not self.saved_hidden_states is None:
+            self.saved_hidden_states = buffer_expand(
+                self.saved_hidden_states,
+                expand_size,
+                dim= 0,
+                contiguous= True,
+            )
 
         return expand_size
 
@@ -384,6 +399,9 @@ class QueueRolloutStorage(RolloutStorage):
         self.actions_log_prob = self.swap_from_cursor(self.actions_log_prob)
         self.mu = self.swap_from_cursor(self.mu)
         self.sigma = self.swap_from_cursor(self.sigma)
+        if not self.saved_hidden_states is None:
+            with torch.no_grad():
+                self.saved_hidden_states = buffer_swap(self.saved_hidden_states, self.step, contiguous= True)
         self.step = 0
 
     def reccurent_mini_batch_generator(self, num_mini_batches, num_epochs=8):
@@ -425,57 +443,85 @@ class ActionLabelRollout(QueueRolloutStorage):
         self.action_labels = self.swap_from_cursor(self.action_labels)
         return super().untie_buffer_loop()
     
-    def mini_batch_generator(self, num_mini_batches, num_epochs=8):
-        batch_size = self.num_envs * self.num_transitions_per_env
-        mini_batch_size = batch_size // num_mini_batches
-        indices = torch.randperm(num_mini_batches*mini_batch_size, requires_grad=False, device=self.device)
+    def get_minibatch_from_indices(self, T_slice, B_slice, padded_B_slice=None, prev_done_mask=None):
+        minibatch = super().get_minibatch_from_indices(T_slice, B_slice, padded_B_slice, prev_done_mask)
+        action_label_batch = self.action_labels[T_slice, B_slice]
 
-        observations = self.observations.flatten(0, 1)
-        if self.privileged_observations is not None:
-            critic_observations = self.privileged_observations.flatten(0, 1)
-        else:
-            critic_observations = observations
-
-        actions = self.actions.flatten(0, 1)
-        values = self.values.flatten(0, 1)
-        returns = self.returns.flatten(0, 1)
-        old_actions_log_prob = self.actions_log_prob.flatten(0, 1)
-        advantages = self.advantages.flatten(0, 1)
-        old_mu = self.mu.flatten(0, 1)
-        old_sigma = self.sigma.flatten(0, 1)
-        action_labels = self.action_labels.flatten(0, 1)
-
-        for epoch in range(num_epochs):
-            for i in range(num_mini_batches):
-
-                start = i*mini_batch_size
-                end = (i+1)*mini_batch_size
-                batch_idx = indices[start:end]
-
-                obs_batch = observations[batch_idx]
-                critic_observations_batch = critic_observations[batch_idx]
-                actions_batch = actions[batch_idx]
-                target_values_batch = values[batch_idx]
-                returns_batch = returns[batch_idx]
-                old_actions_log_prob_batch = old_actions_log_prob[batch_idx]
-                advantages_batch = advantages[batch_idx]
-                old_mu_batch = old_mu[batch_idx]
-                old_sigma_batch = old_sigma[batch_idx]
-                action_label_batch = action_labels[batch_idx]
-                yield ActionLabelRollout.MiniBatch(
-                    obs_batch, critic_observations_batch, actions_batch, target_values_batch, advantages_batch, returns_batch, \
-                    old_actions_log_prob_batch, old_mu_batch, old_sigma_batch, (None, None), None, action_label_batch,
-                )
-
-
-    def reccurent_mini_batch_generator(self, num_mini_batches, num_epochs=8):
-        mini_batch_size = self.num_envs // num_mini_batches
-        for idx, minibatch in enumerate(super().reccurent_mini_batch_generator(num_mini_batches, num_epochs)):
-            epoch_idx = idx // num_mini_batches
-            minibatch_idx = idx % num_mini_batches
-            start = minibatch_idx * mini_batch_size
-            stop = (minibatch_idx+1) * mini_batch_size
-            action_labels_batch = self.action_labels[:, start:stop]
-
-            yield ActionLabelRollout.MiniBatch(*minibatch, action_labels_batch)
+        if padded_B_slice is None:
+            action_label_batch = action_label_batch.flatten(0, 1)
+        
+        return ActionLabelRollout.MiniBatch(*minibatch, action_label_batch)
             
+class SarsaRolloutStorage(RolloutStorage):
+    """ The rollout storage for SARSA algorithm and those who need the next state """
+    class Transition(RolloutStorage.Transition):
+        def __init__(self):
+            super().__init__()
+            self.next_observations = None
+            self.next_privileged_observations = None
+
+    MiniBatch = namedtuple("MiniBatch", [
+        *RolloutStorage.MiniBatch._fields,
+        "next_obs",
+        "next_critic_obs",
+    ])
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Use a longer buffer to store the next observation and perform the safety checking
+        self.all_observations = torch.cat([
+            self.observations,
+            torch.zeros_like(self.observations[:1]),
+        ]).contiguous()
+        self.observations = self.all_observations[:-1]
+        self.next_observations = self.all_observations[1:]
+        if not self.privileged_observations is None:
+            self.all_privileged_observations = torch.cat([
+                self.privileged_observations,
+                torch.zeros_like(self.privileged_observations[:1]),
+            ]).contiguous()
+            self.privileged_observations = self.all_privileged_observations[:-1]
+            self.next_privileged_observations = self.all_privileged_observations[1:]
+
+    def add_transitions(self, transition: Transition):
+        if False:
+            # For the running efficiency, will not check obs[step] == next_obs[step-1]
+            assert (transition.observations == self.next_observations[self.step-1]).all(), \
+            "It is the user's responsibility to make sure that that the next_obs[step-1] == obs[step] (error in observation) "
+            assert (transition.privileged_observations == self.next_privileged_observations[self.step-1]).all(), \
+            "It is the user's responsibility to make sure that that the next_obs[step-1] == obs[step] (error in privileged observation) "
+        if self.step == (self.num_transitions_per_env - 1):
+            # For the running efficiency, only copy next_observation at the end of the rollout.
+            # Because next_obs and obs shares the same memory.
+            # Also assuming each rollout (by the runner) fills the rollout storage.
+            self.next_observations[self.step].copy_(transition.next_observations)
+            self.next_privileged_observations[self.step].copy_(transition.next_privileged_observations)
+        return super().add_transitions(transition)
+    
+    def reccurent_mini_batch_generator(self, num_mini_batches, num_epochs=8):
+        self._padded_next_obs_trajectories, _ = split_and_pad_trajectories(
+           self.next_observations,
+           self.dones,
+        )
+        if not self.privileged_observations is None:
+            self._padded_next_critic_obs_trajectories, _ = split_and_pad_trajectories(
+                self.next_privileged_observations,
+                self.dones,
+            )
+        return super().reccurent_mini_batch_generator(num_mini_batches, num_epochs)
+    
+    def get_minibatch_from_indices(self, T_slice, B_slice, padded_B_slice=None, prev_done_mask=None):
+        minibatch = super().get_minibatch_from_indices(T_slice, B_slice, padded_B_slice, prev_done_mask)
+
+        if padded_B_slice is None:
+            next_obs_batch = self.next_observations[T_slice, B_slice]
+            next_critic_obs_batch = next_obs_batch if self.privileged_observations is None else self.next_privileged_observations[T_slice, B_slice]
+        else:
+            next_obs_batch = self._padded_next_obs_trajectories[T_slice, B_slice]
+            next_critic_obs_batch = next_obs_batch if self.privileged_observations is None else self._padded_next_critic_obs_trajectories[T_slice, B_slice]
+        
+        return SarsaRolloutStorage.MiniBatch(
+            *minibatch,
+            next_obs_batch,
+            next_critic_obs_batch,
+        )

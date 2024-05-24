@@ -68,7 +68,6 @@ class PPO:
         self.actor_critic.to(self.device)
         self.storage = None # initialized later
         self.optimizer = getattr(optim, optimizer_class_name)(self.actor_critic.parameters(), lr=learning_rate)
-        self.transition = RolloutStorage.Transition()
 
         # PPO parameters
         self.clip_param = clip_param
@@ -86,6 +85,7 @@ class PPO:
         self.current_learning_iteration = 0
 
     def init_storage(self, num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape):
+        self.transition = RolloutStorage.Transition()
         self.storage = RolloutStorage(num_envs, num_transitions_per_env, actor_obs_shape, critic_obs_shape, action_shape, self.device)
 
     def test_mode(self):
@@ -108,7 +108,7 @@ class PPO:
         self.transition.critic_observations = critic_obs
         return self.transition.actions
     
-    def process_env_step(self, rewards, dones, infos):
+    def process_env_step(self, rewards, dones, infos, next_obs, next_critic_obs):
         self.transition.rewards = rewards.clone()
         self.transition.dones = dones
         # Bootstrapping on time outs
@@ -162,9 +162,9 @@ class PPO:
         return mean_losses, average_stats
 
     def compute_losses(self, minibatch):
-        self.actor_critic.act(minibatch.obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[0])
+        self.actor_critic.act(minibatch.obs, masks=minibatch.masks, hidden_states=minibatch.hidden_states.actor)
         actions_log_prob_batch = self.actor_critic.get_actions_log_prob(minibatch.actions)
-        value_batch = self.actor_critic.evaluate(minibatch.critic_obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[1])
+        value_batch = self.actor_critic.evaluate(minibatch.critic_obs, masks=minibatch.masks, hidden_states=minibatch.hidden_states.critic)
         mu_batch = self.actor_critic.action_mean
         sigma_batch = self.actor_critic.action_std
         try:
@@ -222,3 +222,22 @@ class PPO:
         if self.use_clipped_value_loss:
             inter_vars["value_clipped"] = value_clipped
         return return_, inter_vars, dict()
+
+    def state_dict(self):
+        state_dict = {
+            "model_state_dict": self.actor_critic.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+        }
+        if hasattr(self, "lr_scheduler"):
+            state_dict["lr_scheduler_state_dict"] = self.lr_scheduler.state_dict()
+        
+        return state_dict
+    
+    def load_state_dict(self, state_dict):
+        self.actor_critic.load_state_dict(state_dict["model_state_dict"])
+        if "optimizer_state_dict" in state_dict:
+            self.optimizer.load_state_dict(state_dict["optimizer_state_dict"])
+        if hasattr(self, "lr_scheduler"):
+            self.lr_scheduler.load_state_dict(state_dict["lr_scheduler_state_dict"])
+        elif "lr_scheduler_state_dict" in state_dict:
+            print("Warning: lr scheduler state dict loaded but no lr scheduler is initialized. Ignored.")

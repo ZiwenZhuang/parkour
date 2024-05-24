@@ -24,6 +24,8 @@ class MlpModel(torch.nn.Module):
             hidden_sizes = [hidden_sizes]
         elif hidden_sizes is None:
             hidden_sizes = []
+        if isinstance(nonlinearity, str):
+            nonlinearity = getattr(torch.nn, nonlinearity)
         hidden_layers = [torch.nn.Linear(n_in, n_out) for n_in, n_out in
             zip([input_size] + hidden_sizes[:-1], hidden_sizes)]
         sequence = list()

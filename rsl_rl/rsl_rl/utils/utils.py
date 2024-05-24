@@ -92,3 +92,93 @@ def get_obs_slice(segments: OrderedDict, component_name: str):
             break
     assert component_shape is not None, "No component ({}) is found in the given components {}".format(component_name, [segments.keys()])
     return slice(obs_start, obs_end), component_shape
+
+""" NOTE:
+* Loop through obs_segments to get the same order of components defined in obs_segments
+* These operations does not require the obs to be a 2-d tensor, but the last dimension must be packed
+    with a connected set of components.
+"""
+def get_subobs_size(obs_segments, component_names):
+    """ Compute the size of a subset of observations. """
+    obs_size = 0
+    for component in obs_segments.keys():
+        if component in component_names:
+            obs_slice, _ = get_obs_slice(obs_segments, component)
+            obs_size += obs_slice.stop - obs_slice.start
+    return obs_size
+
+def get_subobs_by_components(observations, component_names, obs_segments):
+    """ Get a subset of observations from the full observation tensor. """
+    estimator_input = []
+    for component in obs_segments.keys():
+        if component in component_names:
+            obs_slice, _ = get_obs_slice(obs_segments, component)
+            estimator_input.append(observations[..., obs_slice])
+    return torch.cat(estimator_input, dim= -1) # NOTE: this is a 2-d tensor with (batch_size, obs_size)
+
+def substitute_estimated_state(observations, target_components, estimated_state, obs_segments):
+    """ Substitute the estimated state into part of the observations.
+    """
+    estimated_state_start = 0
+    for component in obs_segments:
+        if component in target_components:
+            obs_slice, obs_shape = get_obs_slice(obs_segments, component)
+            estimated_state_end = estimated_state_start + np.prod(obs_shape)
+            observations[..., obs_slice] = estimated_state[..., estimated_state_start:estimated_state_end]
+            estimated_state_start = estimated_state_end
+    return observations
+
+@torch.jit.script
+def wrap_to_pi(angles):
+    angles %= 2*np.pi
+    angles -= 2*np.pi * (angles > np.pi)
+    return angles
+
+@torch.jit.script
+def quat_to_rotmat(q):
+    """ q: shape (N, 4) quaternion """
+    x, y, z, w = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+    rotmat = torch.zeros(q.shape[0], 3, 3, device= q.device)
+    rotmat[:, 0, 0] = 1 - 2*y**2 - 2*z**2
+    rotmat[:, 0, 1] = 2*x*y - 2*z*w
+    rotmat[:, 0, 2] = 2*x*z + 2*y*w
+    rotmat[:, 1, 0] = 2*x*y + 2*z*w
+    rotmat[:, 1, 1] = 1 - 2*x**2 - 2*z**2
+    rotmat[:, 1, 2] = 2*y*z - 2*x*w
+    rotmat[:, 2, 0] = 2*x*z - 2*y*w
+    rotmat[:, 2, 1] = 2*y*z + 2*x*w
+    rotmat[:, 2, 2] = 1 - 2*x**2 - 2*y**2
+    return rotmat
+
+def rotmat_to_euler_zxy(mat):
+    """ mat: shape (N, 3, 3) 3d rotation matrix """
+    # get the rotation parameters in y(q0)x(q1)z(q2) sequence
+    y = torch.atan2(mat[:, 0, 2], mat[:, 2, 2]) # y
+    x = torch.asin(-mat[:, 1, 2]) # x
+    z = torch.atan2(mat[:, 1, 0], mat[:, 1, 1]) # z
+    y = wrap_to_pi(y)
+    x = wrap_to_pi(x)
+    z = wrap_to_pi(z)
+    return z, x, y
+
+def rotmat_to_euler_yzx(mat):
+    """ mat: shape (N, 3, 3) 3d rotation matrix """
+    # get the rotation parameters in x(q0)z(q1)y(q2) sequence
+    x = torch.atan2(mat[:, 2, 1], mat[:, 1, 1]) # x
+    z = torch.asin(-mat[:, 0, 1]) # z
+    y = torch.atan2(mat[:, 0, 2], mat[:, 0, 0]) # y
+    x = wrap_to_pi(x)
+    z = wrap_to_pi(z)
+    y = wrap_to_pi(y)
+    return y, z, x
+
+def rotmat_to_euler_xzy(mat):
+    """ mat: shape (N, 3, 3) 3d rotation matrix """
+    # get the rotation parameters in y(q0)z(q1)x(q2) sequence
+    y = torch.atan2(-mat[:, 2, 0], mat[:, 0, 0]) # y
+    z = torch.asin(mat[:, 1, 0]) # z
+    x = torch.atan2(-mat[:, 1, 2], mat[:, 1, 1]) # x
+    y = wrap_to_pi(y)
+    z = wrap_to_pi(z)
+    x = wrap_to_pi(x)
+    return x, z, y

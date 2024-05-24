@@ -30,3 +30,4 @@
 
 from .ppo import PPO
 from .tppo import TPPO
+from .estimator import EstimatorPPO, EstimatorTPPO

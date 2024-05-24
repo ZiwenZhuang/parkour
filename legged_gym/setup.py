@@ -12,6 +12,7 @@ setup(
     install_requires=['isaacgym',
                       'rsl-rl',
                       'matplotlib',
+                      'tensorboard',
                       'tensorboardX',
                       'debugpy']
 )

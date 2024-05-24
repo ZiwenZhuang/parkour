@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from numpy.random import choice
 from scipy import interpolate
 
@@ -13,13 +14,14 @@ class TerrainPerlin:
         self.env_width = cfg.terrain_width
         self.xSize = cfg.terrain_length * cfg.num_rows # int(cfg.horizontal_scale * cfg.tot_cols)
         self.ySize = cfg.terrain_width * cfg.num_cols # int(cfg.horizontal_scale * cfg.tot_rows)
-        self.tot_cols = int(self.xSize / cfg.horizontal_scale)
-        self.tot_rows = int(self.ySize / cfg.horizontal_scale)
+        self.tot_rows = int(self.xSize / cfg.horizontal_scale)
+        self.tot_cols = int(self.ySize / cfg.horizontal_scale)
         assert(self.xSize == cfg.horizontal_scale * self.tot_rows and self.ySize == cfg.horizontal_scale * self.tot_cols)
         self.heightsamples_float = self.generate_fractal_noise_2d(self.xSize, self.ySize, self.tot_rows, self.tot_cols, **cfg.TerrainPerlin_kwargs)
         # self.heightsamples_float[self.tot_cols//2 - 100:, :] += 100000
         # self.heightsamples_float[self.tot_cols//2 - 40: self.tot_cols//2 + 40, :] = np.mean(self.heightsamples_float)
         self.heightsamples = (self.heightsamples_float * (1 / cfg.vertical_scale)).astype(np.int16)
+        self.heightfield_raw_pyt = torch.tensor(self.heightsamples, device= "cpu")
         
 
         print("Terrain heightsamples shape: ", self.heightsamples.shape)
@@ -111,3 +113,31 @@ class TerrainPerlin:
                         int(origin_y / self.cfg.horizontal_scale),
                     ] * self.cfg.vertical_scale,
                 ]
+        self.heightfield_raw_pyt = torch.from_numpy(self.heightsamples).to(device= self.device).float()
+
+    def in_terrain_range(self, pos):
+        """ Check if the given position still have terrain underneath. (same x/y, but z is different)
+        pos: (batch_size, 3) torch.Tensor
+        """
+        return torch.logical_and(
+            pos[..., :2] >= 0,
+            pos[..., :2] < torch.tensor([self.xSize, self.ySize], device= self.device),
+        ).all(dim= -1)
+    
+    @torch.no_grad()
+    def get_terrain_heights(self, points):
+        """ Get the terrain heights below the given points """
+        points_shape = points.shape
+        points = points.view(-1, 3)
+        points_x_px = (points[:, 0] / self.cfg.horizontal_scale).to(int)
+        points_y_px = (points[:, 1] / self.cfg.horizontal_scale).to(int)
+        out_of_range_mask = torch.logical_or(
+            torch.logical_or(points_x_px < 0, points_x_px >= self.heightfield_raw_pyt.shape[0]),
+            torch.logical_or(points_y_px < 0, points_y_px >= self.heightfield_raw_pyt.shape[1]),
+        )
+        points_x_px = torch.clip(points_x_px, 0, self.heightfield_raw_pyt.shape[0] - 1)
+        points_y_px = torch.clip(points_y_px, 0, self.heightfield_raw_pyt.shape[1] - 1)
+        heights = self.heightfield_raw_pyt[points_x_px, points_y_px] * self.cfg.vertical_scale
+        heights[out_of_range_mask] = - torch.inf
+        heights = heights.view(points_shape[:-1])
+        return heights

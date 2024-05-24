@@ -29,12 +29,14 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 import numpy as np
+np.float = np.float32
 import os
 from datetime import datetime
 
 import isaacgym
 from legged_gym.envs import *
-from legged_gym.utils import get_args, task_registry
+from legged_gym.utils import get_args
+from legged_gym.utils.task_registry import task_registry
 import torch
 
 from legged_gym.debugger import break_into_debugger

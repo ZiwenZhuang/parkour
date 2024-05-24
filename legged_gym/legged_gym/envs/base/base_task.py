@@ -34,6 +34,8 @@ from isaacgym import gymutil
 import numpy as np
 import torch
 
+from legged_gym.utils.webviewer import WebViewer
+
 # Base class for RL tasks
 class BaseTask():
 
@@ -66,6 +68,12 @@ class BaseTask():
         torch._C._jit_set_profiling_mode(False)
         torch._C._jit_set_profiling_executor(False)
 
+        self.extras = {}
+
+        # create envs, sim and viewer
+        self.create_sim()
+        self.gym.prepare_sim(self.sim)
+
         # allocate buffers
         self.obs_buf = torch.zeros(self.num_envs, self.num_obs, device=self.device, dtype=torch.float)
         self.rew_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.float)
@@ -77,12 +85,6 @@ class BaseTask():
         else: 
             self.privileged_obs_buf = None
             # self.num_privileged_obs = self.num_obs
-
-        self.extras = {}
-
-        # create envs, sim and viewer
-        self.create_sim()
-        self.gym.prepare_sim(self.sim)
 
         # todo: read from config
         self.enable_viewer_sync = True
@@ -97,6 +99,13 @@ class BaseTask():
                 self.viewer, gymapi.KEY_ESCAPE, "QUIT")
             self.gym.subscribe_viewer_keyboard_event(
                 self.viewer, gymapi.KEY_V, "toggle_viewer_sync")
+
+    def start_webviewer(self, port= 5000):
+        """ This method must be called after the env is fully initialized """
+        print("Starting webviewer on port: ", port)
+        print("env is passed as a parameter to the webviewer")
+        self.webviewer = WebViewer(host= "127.0.0.1", port= port)
+        self.webviewer.setup(self)
 
     def get_observations(self):
         return self.obs_buf
@@ -142,3 +151,8 @@ class BaseTask():
                     self.gym.sync_frame_time(self.sim)
             else:
                 self.gym.poll_viewer_events(self.viewer)
+        if hasattr(self, "webviewer"):
+            self.webviewer.render(fetch_results=True,
+                        step_graphics=True,
+                        render_all_camera_sensors=True,
+                        wait_for_page_load=True)

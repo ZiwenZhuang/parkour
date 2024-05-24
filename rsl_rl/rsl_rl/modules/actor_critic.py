@@ -45,10 +45,19 @@ class ActorCritic(nn.Module):
                         activation='elu',
                         init_noise_std=1.0,
                         mu_activation= None, # If set, the last layer will be added with a special activation layer.
+                        obs_segments= None,
+                        privileged_obs_segments= None, # No need
                         **kwargs):
         if kwargs:
             print("ActorCritic.__init__ got unexpected arguments, which will be ignored: " + str([key for key in kwargs.keys()]))
         super(ActorCritic, self).__init__()
+
+        # obs_segmnets is a ordered dict that contains the observation components (string) and its shape.
+        # We use this to slice the observations into the correct components.
+        if privileged_obs_segments is None:
+            privileged_obs_segments = obs_segments
+        self.obs_segments = obs_segments
+        self.privileged_obs_segments = privileged_obs_segments
 
         activation = get_activation(activation)
 

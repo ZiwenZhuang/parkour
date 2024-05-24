@@ -129,6 +129,7 @@ class LeggedRobotCfg(BaseConfig):
         max_push_vel_xy = 1.
         max_push_vel_ang = 0.
         init_dof_pos_ratio_range = [0.5, 1.5]
+        init_base_vel_range = [-1., 1.]
 
     class rewards:
         class scales:
@@ -160,6 +161,7 @@ class LeggedRobotCfg(BaseConfig):
         class obs_scales:
             lin_vel = 2.0
             ang_vel = 0.25
+            commands = [2., 2., 0.25] # matching lin_vel and ang_vel scales
             dof_pos = 1.0
             dof_vel = 0.05
             height_measurements = 5.0
@@ -182,6 +184,12 @@ class LeggedRobotCfg(BaseConfig):
         ref_env = 0
         pos = [10, 0, 6]  # [m]
         lookat = [11., 5, 3.]  # [m]
+        stream_depth = False # for webviewer
+
+        draw_commands = True # for debugger
+        class commands:
+            color = [0.1, 0.8, 0.1] # rgb
+            size = 0.5
 
     class sim:
         dt =  0.005

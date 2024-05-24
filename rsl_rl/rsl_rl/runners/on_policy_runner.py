@@ -33,12 +33,13 @@ import os
 from collections import deque
 import statistics
 
-from torch.utils.tensorboard import SummaryWriter
+from tensorboardX import SummaryWriter
 import torch
 
 import rsl_rl.algorithms as algorithms
 import rsl_rl.modules as modules
 from rsl_rl.env import VecEnv
+from rsl_rl.utils import ckpt_manipulator
 
 
 class OnPolicyRunner:
@@ -99,12 +100,15 @@ class OnPolicyRunner:
         cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
         cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
 
+        print("Initialization done, start learning.")
+        print("NOTE: you may see a bunch of `NaN or Inf found in input tensor` once and appears in the log. Just ignore it if it does not affect the performance.")
         start_iter = self.current_learning_iteration
         tot_iter = self.current_learning_iteration + num_learning_iterations
+        tot_start_time = time.time()
+        start = time.time()
         while self.current_learning_iteration < tot_iter:
-            start = time.time()
             # Rollout
-            with torch.inference_mode():
+            with torch.inference_mode(self.cfg.get("inference_mode_rollout", True)):
                 for i in range(self.num_steps_per_env):
                     obs, critic_obs, rewards, dones, infos = self.rollout_step(obs, critic_obs)
                     
@@ -137,6 +141,7 @@ class OnPolicyRunner:
                 self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
             ep_infos.clear()
             self.current_learning_iteration = self.current_learning_iteration + 1
+            start = time.time()
         
         self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
 
@@ -145,12 +150,12 @@ class OnPolicyRunner:
         obs, privileged_obs, rewards, dones, infos = self.env.step(actions)
         critic_obs = privileged_obs if privileged_obs is not None else obs
         obs, critic_obs, rewards, dones = obs.to(self.device), critic_obs.to(self.device), rewards.to(self.device), dones.to(self.device)
-        self.alg.process_env_step(rewards, dones, infos)
+        self.alg.process_env_step(rewards, dones, infos, obs, critic_obs)
         return obs, critic_obs, rewards, dones, infos
 
     def log(self, locs, width=80, pad=35):
         self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
-        self.tot_time += locs['collection_time'] + locs['learn_time']
+        self.tot_time = time.time() - locs['tot_start_time']
         iteration_time = locs['collection_time'] + locs['learn_time']
 
         ep_string = f''
@@ -164,7 +169,14 @@ class OnPolicyRunner:
                     if len(ep_info[key].shape) == 0:
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.device)))
-                value = torch.mean(infotensor)
+                if "_max" in key:
+                    infotensor = infotensor[~infotensor.isnan()]
+                    value = torch.max(infotensor) if len(infotensor) > 0 else torch.tensor(float("nan"))
+                elif "_min" in key:
+                    infotensor = infotensor[~infotensor.isnan()]
+                    value = torch.min(infotensor) if len(infotensor) > 0 else torch.tensor(float("nan"))
+                else:
+                    value = torch.nanmean(infotensor)
                 self.writer.add_scalar('Episode/' + key, value, self.current_learning_iteration)
                 ep_string += f"""{f'Mean episode {key}:':>{pad}} {value:.4f}\n"""
         mean_std = self.alg.actor_critic.action_std.mean()
@@ -181,10 +193,12 @@ class OnPolicyRunner:
         self.writer.add_scalar('Perf/collection time', locs['collection_time'], self.current_learning_iteration)
         self.writer.add_scalar('Perf/learning_time', locs['learn_time'], self.current_learning_iteration)
         self.writer.add_scalar('Perf/gpu_allocated', torch.cuda.memory_allocated(self.device) / 1024 ** 3, self.current_learning_iteration)
-        self.writer.add_scalar('Perf/gpu_occupied', torch.cuda.mem_get_info(self.device)[1] / 1024 ** 3, self.current_learning_iteration)
+        self.writer.add_scalar('Perf/gpu_global_free_mem', torch.cuda.mem_get_info(self.device)[0] / 1024 ** 3, self.current_learning_iteration)
+        self.writer.add_scalar('Perf/gpu_total', torch.cuda.mem_get_info(self.device)[1] / 1024 ** 3, self.current_learning_iteration)
         self.writer.add_scalar('Train/mean_reward_each_timestep', statistics.mean(locs['rframebuffer']), self.current_learning_iteration)
         if len(locs['rewbuffer']) > 0:
             self.writer.add_scalar('Train/mean_reward', statistics.mean(locs['rewbuffer']), self.current_learning_iteration)
+            self.writer.add_scalar('Train/ratio_above_mean_reward', statistics.mean([(1. if rew > statistics.mean(locs['rewbuffer']) else 0) for rew in locs['rewbuffer']]), self.current_learning_iteration)
             self.writer.add_scalar('Train/mean_episode_length', statistics.mean(locs['lenbuffer']), self.current_learning_iteration)
             self.writer.add_scalar('Train/mean_reward/time', statistics.mean(locs['rewbuffer']), self.tot_time)
             self.writer.add_scalar('Train/mean_episode_length/time', statistics.mean(locs['lenbuffer']), self.tot_time)
@@ -192,29 +206,37 @@ class OnPolicyRunner:
         str = f" \033[1m Learning iteration {self.current_learning_iteration}/{locs['tot_iter']} \033[0m "
 
         if len(locs['rewbuffer']) > 0:
-            log_string = (f"""{'#' * width}\n"""
-                          f"""{str.center(width, ' ')}\n\n"""
-                          f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
-                            'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
-                          f"""{'Value function loss:':>{pad}} {locs["losses"]['value_loss']:.4f}\n"""
-                          f"""{'Surrogate loss:':>{pad}} {locs["losses"]['surrogate_loss']:.4f}\n"""
-                          f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
-                          f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
-                          f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
-                        #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
-                        #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n"""
-                        )
+            log_string = (
+                f"""{'#' * width}\n"""
+                f"""{str.center(width, ' ')}\n\n"""
+                f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                    'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+            )
+            for k, v in locs["losses"].items():
+                log_string += f"""{k:>{pad}} {v.item():.4f}\n"""
+            log_string += (
+                f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                f"""{'Mean reward:':>{pad}} {statistics.mean(locs['rewbuffer']):.2f}\n"""
+                f"""{'Mean episode length:':>{pad}} {statistics.mean(locs['lenbuffer']):.2f}\n"""
+                # f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
+                # f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n"""
+            )
         else:
-            log_string = (f"""{'#' * width}\n"""
-                          f"""{str.center(width, ' ')}\n\n"""
-                          f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
-                            'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
-                          f"""{'Value function loss:':>{pad}} {locs["losses"]['value_loss']:.4f}\n"""
-                          f"""{'Surrogate loss:':>{pad}} {locs["losses"]['surrogate_loss']:.4f}\n"""
-                          f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
-                        #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
-                        #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n"""
-                        )
+            log_string = (
+                f"""{'#' * width}\n"""
+                f"""{str.center(width, ' ')}\n\n"""
+                f"""{'Computation:':>{pad}} {fps:.0f} steps/s (collection: {locs[
+                    'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
+            )
+            for k. v in locs["losses"].items():
+                log_string += f"""{k:>{pad}} {v.item():.4f}\n"""
+            log_string += (
+                f"""{'Value function loss:':>{pad}} {locs["losses"]['value_loss']:.4f}\n"""
+                f"""{'Surrogate loss:':>{pad}} {locs["losses"]['surrogate_loss']:.4f}\n"""
+                f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
+                # f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
+                # f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n"""
+            )
 
         log_string += ep_string
         log_string += (f"""{'-' * width}\n"""
@@ -226,29 +248,30 @@ class OnPolicyRunner:
         print(log_string)
 
     def save(self, path, infos=None):
-        run_state_dict = {
-            'model_state_dict': self.alg.actor_critic.state_dict(),
-            'optimizer_state_dict': self.alg.optimizer.state_dict(),
+        run_state_dict = self.alg.state_dict()
+        run_state_dict.update({
             'iter': self.current_learning_iteration,
             'infos': infos,
-        }
-        if hasattr(self.alg, "lr_scheduler"):
-            run_state_dict["lr_scheduler_state_dict"] = self.alg.lr_scheduler.state_dict()
+        })
         torch.save(run_state_dict, path)
 
     def load(self, path, load_optimizer=True):
         loaded_dict = torch.load(path)
-        self.alg.actor_critic.load_state_dict(loaded_dict['model_state_dict'])
-        if load_optimizer and "optimizer_state_dict" in loaded_dict:
-            self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict'])
-        if "lr_scheduler_state_dict" in loaded_dict:
-            if not hasattr(self.alg, "lr_scheduler"):
-                print("Warning: lr_scheduler_state_dict found in checkpoint but no lr_scheduler in algorithm. Ignoring.")
-            else:
-                self.alg.lr_scheduler.load_state_dict(loaded_dict["lr_scheduler_state_dict"])
-        elif hasattr(self.alg, "lr_scheduler"):
-            print("Warning: lr_scheduler_state_dict not found in checkpoint but lr_scheduler in algorithm. Ignoring.")
+        if self.cfg.get("ckpt_manipulator", False):
+            # suppose to be a string specifying which function to use
+            print("\033[1;36m Warning: using a hacky way to load the model. \033[0m")
+            loaded_dict = getattr(ckpt_manipulator, self.cfg["ckpt_manipulator"])(
+                loaded_dict,
+                self.alg.state_dict(),
+            )
+            print("\033[1;36m Done: using a hacky way to load the model. \033[0m")
+        self.alg.load_state_dict(loaded_dict)
         self.current_learning_iteration = loaded_dict['iter']
+        if self.cfg.get("ckpt_manipulator", False):
+            try:
+                self.save(os.path.join(self.log_dir, 'model_{}.pt'.format(self.current_learning_iteration)))
+            except:
+                print("\033[1;36m Save manipulated checkpoint failed, ignored... \033[0m")
         return loaded_dict['infos']
 
     def get_inference_policy(self, device=None):

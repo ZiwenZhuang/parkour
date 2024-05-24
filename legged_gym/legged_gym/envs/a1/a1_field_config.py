@@ -200,6 +200,7 @@ class A1FieldCfg( A1RoughCfg ):
             exceed_dof_pos_limits = -1e-1
             exceed_torque_limits_i = -2e-1
         soft_dof_pos_limit = 0.01
+        only_positive_rewards = False
 
     class normalization( A1RoughCfg.normalization ):
         class obs_scales( A1RoughCfg.normalization.obs_scales ):
@@ -286,7 +287,7 @@ class A1FieldCfgPPO( A1RoughCfgPPO ):
         ("_propDelay{:.2f}-{:.2f}".format(
                 A1FieldCfg.sensor.proprioception.latency_range[0],
                 A1FieldCfg.sensor.proprioception.latency_range[1],
-            ) if A1FieldCfg.sensor.proprioception.delay_action_obs else ""
+            ) if A1FieldCfg.sensor.proprioception.latency_range[1] > 0. else ""
         ),
         ("_aScale{:d}{:d}{:d}".format(
                 int(A1FieldCfg.control.action_scale[0] * 10),
@@ -297,6 +298,6 @@ class A1FieldCfgPPO( A1RoughCfgPPO ):
         ),
         ])
         resume = False
-        max_iterations = 10000
+        max_iterations = 5000
         save_interval = 500
     

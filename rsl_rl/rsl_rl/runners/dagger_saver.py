@@ -6,10 +6,12 @@ import time
 
 import numpy as np
 import torch
+from tensorboardX import SummaryWriter
+from tabulate import tabulate
 
 from rsl_rl.modules import build_actor_critic
 from rsl_rl.runners.demonstration import DemonstrationSaver
-from rsl_rl.algorithms.tppo import GET_TEACHER_ACT_PROB_FUNC
+from rsl_rl.algorithms.tppo import GET_PROB_FUNC
 
 class DaggerSaver(DemonstrationSaver):
     """ This demonstration saver will rollout the trajectory by running the student policy
@@ -21,6 +23,7 @@ class DaggerSaver(DemonstrationSaver):
             teacher_act_prob= "exp",
             update_times_scale= 5000,
             action_sample_std= 0.0, # if > 0, add Gaussian noise to the action in effort.
+            log_to_tensorboard= False, # if True, log the rollout episode info to tensorboard
             **kwargs,
         ):
         """
@@ -32,9 +35,18 @@ class DaggerSaver(DemonstrationSaver):
         self.teacher_act_prob = teacher_act_prob
         self.update_times_scale = update_times_scale
         self.action_sample_std = action_sample_std
+        self.log_to_tensorboard = log_to_tensorboard
+        if self.log_to_tensorboard:
+            self.tb_writer = SummaryWriter(
+                log_dir= osp.join(
+                    self.training_policy_logdir,
+                    "_".join(["collector", *(osp.basename(self.save_dir).split("_")[:2])]),
+                ),
+                flush_secs= 10,
+            )
 
         if isinstance(self.teacher_act_prob, str):
-            self.teacher_act_prob = GET_TEACHER_ACT_PROB_FUNC(self.teacher_act_prob, update_times_scale)
+            self.teacher_act_prob = GET_PROB_FUNC(self.teacher_act_prob, update_times_scale)
         else:
             self.__teacher_act_prob = self.teacher_act_prob
             self.teacher_act_prob = lambda x: self.__teacher_act_prob
@@ -45,6 +57,11 @@ class DaggerSaver(DemonstrationSaver):
         self.metadata["update_times_scale"] = self.update_times_scale
         self.metadata["action_sample_std"] = self.action_sample_std
         self.build_training_policy()
+        return return_
+
+    def init_storage_buffer(self):
+        return_ = super().init_storage_buffer()
+        self.rollout_episode_infos = []
         return return_
 
     def build_training_policy(self):
@@ -77,21 +94,26 @@ class DaggerSaver(DemonstrationSaver):
                     time.sleep(0.1)
             self.training_policy.load_state_dict(loaded_dict["model_state_dict"])
             self.training_policy_iteration = loaded_dict["iter"]
+            # override the action std in self.training_policy
+            with torch.no_grad():
+                if self.action_sample_std > 0:
+                    self.training_policy.std[:] = self.action_sample_std
             print("Training policy iteration: {}".format(self.training_policy_iteration))
         self.use_teacher_act_mask = torch.rand(self.env.num_envs) < self.teacher_act_prob(self.training_policy_iteration)
 
     def get_transition(self):
-        if self.use_critic_obs:
-            teacher_actions = self.policy.act_inference(self.critic_obs)
-        else:
-            teacher_actions = self.policy.act_inference(self.obs)
+        teacher_actions = self.get_policy_actions()
         actions = self.training_policy.act(self.obs)
-        if self.action_sample_std > 0:
-            actions += torch.randn_like(actions) * self.action_sample_std
         actions[self.use_teacher_act_mask] = teacher_actions[self.use_teacher_act_mask]
         n_obs, n_critic_obs, rewards, dones, infos = self.env.step(actions)
         # Use teacher actions to label the trajectory, no matter what the student policy does
         return teacher_actions, rewards, dones, infos, n_obs, n_critic_obs
+
+    def add_transition(self, step_i, infos):
+        return_ = super().add_transition(step_i, infos)
+        if "episode" in infos:
+            self.rollout_episode_infos.append(infos["episode"])
+        return return_
     
     def policy_reset(self, dones):
         return_ = super().policy_reset(dones)
@@ -103,3 +125,33 @@ class DaggerSaver(DemonstrationSaver):
         """ Also check whether need to load the latest training policy model. """
         self.load_latest_training_policy()
         return super().check_stop()
+    
+    def print_log(self):
+        # Copy from runner logging mechanism. TODO: optimize these implementation into one.
+        ep_table = []
+        for key in self.rollout_episode_infos[0].keys():
+            infotensor = torch.tensor([], device= self.env.device)
+            for ep_info in self.rollout_episode_infos:
+                if not isinstance(ep_info[key], torch.Tensor):
+                    ep_info[key] = torch.Tensor([ep_info[key]])
+                if len(ep_info[key].shape) == 0:
+                    ep_info[key] = ep_info[key].unsqueeze(0)
+                infotensor = torch.cat((infotensor, ep_info[key].to(self.env.device)))
+            if "_max" in key:
+                infotensor = infotensor[~infotensor.isnan()]
+                value = torch.max(infotensor) if len(infotensor) > 0 else torch.tensor(float("nan"))
+            elif "_min" in key:
+                infotensor = infotensor[~infotensor.isnan()]
+                value = torch.min(infotensor) if len(infotensor) > 0 else torch.tensor(float("nan"))
+            else:
+                value = torch.nanmean(infotensor)
+            if self.log_to_tensorboard:
+                self.tb_writer.add_scalar('Episode/' + key, value, self.training_policy_iteration)
+            ep_table.append(("Episode/" + key, value.detach().cpu().item()))
+        # NOTE: assuming dagger trainner's iteration is always faster than collector's iteration
+        # Otherwise, the training_policy will not be updated.
+        self.training_policy_iteration += 1
+        print("Sampling saved for training policy iteration: {}".format(self.training_policy_iteration))
+        print(tabulate(ep_table))
+        self.rollout_episode_infos = []
+        return super().print_log()

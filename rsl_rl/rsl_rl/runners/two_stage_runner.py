@@ -3,7 +3,7 @@ import os
 import torch
 
 from rsl_rl.runners.on_policy_runner import OnPolicyRunner
-from rsl_rl.storage.rollout_dataset import RolloutDataset
+from rsl_rl.storage.rollout_files.rollout_dataset import RolloutDataset
 
 class TwoStageRunner(OnPolicyRunner):
     """ A runner that have a pretrain stage which is used to collect demonstration data """
@@ -17,7 +17,7 @@ class TwoStageRunner(OnPolicyRunner):
         self.rollout_dataset = RolloutDataset(
             **self.cfg["pretrain_dataset"],
             num_envs= self.env.num_envs,
-            rl_device= self.alg.device,
+            device= self.alg.device,
         )
 
     def rollout_step(self, obs, critic_obs):
@@ -31,8 +31,8 @@ class TwoStageRunner(OnPolicyRunner):
             if not transition is None:
                 self.alg.collect_transition_from_dataset(transition, infos)
                 return (
-                    transition.observation,
-                    transition.privileged_observation,
+                    transition.next_observation,
+                    transition.next_privileged_observation,
                     transition.reward,
                     transition.done,
                     infos,

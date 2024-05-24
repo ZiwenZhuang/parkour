@@ -62,6 +62,12 @@ class Logger:
         self.plot_process = Process(target=self._plot)
         self.plot_process.start()
 
+    def plot_additional_states(self):
+        self.plot_vel_process = Process(target=self._plot_vel)
+        self.plot_vel_process.start()
+        self.plot_torque_process = Process(target=self._plot_torque)
+        self.plot_torque_process.start()
+
     def _plot(self):
         nb_rows = 4
         nb_cols = 3
@@ -98,7 +104,6 @@ class Logger:
         a = axs[0, 2]
         if log["base_pitch"]:
             a.plot(time, log["base_pitch"], label='measured')
-            a.plot(time, [-0.75] * len(time), label= 'thresh')
         # if log["command_yaw"]: a.plot(time, log["command_yaw"], label='commanded')
         a.set(xlabel='time [s]', ylabel='base ang [rad]', title='Base pitch')
         a.legend()
@@ -155,6 +160,58 @@ class Logger:
         a.set(xlabel='time [s]', ylabel='', title='rewards')
         # a.set_ylim([-0.12, 0.1])
         a.legend(fontsize = 5)
+        plt.show()
+
+    def _plot_vel(self):
+        log= self.state_log
+        nb_rows = int(np.sqrt(log['all_dof_vel'][0].shape[0]))
+        nb_cols = int(np.ceil(log['all_dof_vel'][0].shape[0] / nb_rows))
+        nb_rows, nb_cols = nb_cols, nb_rows
+        fig, axs = plt.subplots(nb_rows, nb_cols)
+        for key, value in self.state_log.items():
+            time = np.linspace(0, len(value)*self.dt, len(value))
+            break
+        
+        # plot joint velocities
+        for i in range(nb_rows):
+            for j in range(nb_cols):
+                if i*nb_cols+j < log['all_dof_vel'][0].shape[0]:
+                    a = axs[i][j]
+                    a.plot(
+                        time,
+                        [all_dof_vel[i*nb_cols+j] for all_dof_vel in log['all_dof_vel']],
+                        label='measured',
+                    )
+                    a.set(xlabel='time [s]', ylabel='Velocity [rad/s]', title=f'Joint Velocity {i*nb_cols+j}')
+                    a.legend()
+                else:
+                    break
+        plt.show()
+
+    def _plot_torque(self):
+        log= self.state_log
+        nb_rows = int(np.sqrt(log['all_dof_torque'][0].shape[0]))
+        nb_cols = int(np.ceil(log['all_dof_torque'][0].shape[0] / nb_rows))
+        nb_rows, nb_cols = nb_cols, nb_rows
+        fig, axs = plt.subplots(nb_rows, nb_cols)
+        for key, value in self.state_log.items():
+            time = np.linspace(0, len(value)*self.dt, len(value))
+            break
+        
+        # plot joint torques
+        for i in range(nb_rows):
+            for j in range(nb_cols):
+                if i*nb_cols+j < log['all_dof_torque'][0].shape[0]:
+                    a = axs[i][j]
+                    a.plot(
+                        time,
+                        [all_dof_torque[i*nb_cols+j] for all_dof_torque in log['all_dof_torque']],
+                        label='measured',
+                    )
+                    a.set(xlabel='time [s]', ylabel='Torque [Nm]', title=f'Joint Torque {i*nb_cols+j}')
+                    a.legend()
+                else:
+                    break
         plt.show()
 
     def print_rewards(self):

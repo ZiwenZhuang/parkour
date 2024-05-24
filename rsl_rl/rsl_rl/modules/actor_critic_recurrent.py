@@ -36,6 +36,9 @@ from torch.distributions import Normal
 from torch.nn.modules import rnn
 from .actor_critic import ActorCritic, get_activation
 from rsl_rl.utils import unpad_trajectories
+from rsl_rl.utils.collections import namedarraytuple, is_namedarraytuple
+
+ActorCriticHiddenState = namedarraytuple('ActorCriticHiddenState', ['actor', 'critic'])
 
 class ActorCriticRecurrent(ActorCritic):
     is_recurrent = True
@@ -74,39 +77,47 @@ class ActorCriticRecurrent(ActorCritic):
 
     def act(self, observations, masks=None, hidden_states=None):
         input_a = self.memory_a(observations, masks, hidden_states)
-        return super().act(input_a.squeeze(0))
+        return super().act(input_a)
 
     def act_inference(self, observations):
         input_a = self.memory_a(observations)
-        return super().act_inference(input_a.squeeze(0))
+        return super().act_inference(input_a)
 
     def evaluate(self, critic_observations, masks=None, hidden_states=None):
         input_c = self.memory_c(critic_observations, masks, hidden_states)
-        return super().evaluate(input_c.squeeze(0))
+        return super().evaluate(input_c)
     
     def get_hidden_states(self):
-        return self.memory_a.hidden_states, self.memory_c.hidden_states
+        return ActorCriticHiddenState(self.memory_a.hidden_states, self.memory_c.hidden_states)
 
+LstmHiddenState = namedarraytuple('LstmHiddenState', ['hidden', 'cell'])
 
 class Memory(torch.nn.Module):
     def __init__(self, input_size, type='lstm', num_layers=1, hidden_size=256):
         super().__init__()
-        # RNN
+        # RNN currently support only GRU and LSTM
         rnn_cls = nn.GRU if type.lower() == 'gru' else nn.LSTM
         self.rnn = rnn_cls(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers)
         self.hidden_states = None
     
     def forward(self, input, masks=None, hidden_states=None):
-        batch_mode = masks is not None
+        batch_mode = hidden_states is not None
         if batch_mode:
             # batch mode (policy update): need saved hidden states
-            if hidden_states is None:
-                raise ValueError("Hidden states not passed to memory module during policy update")
+            if is_namedarraytuple(hidden_states):
+                hidden_states = tuple(hidden_states)
             out, _ = self.rnn(input, hidden_states)
-            out = unpad_trajectories(out, masks)
+            if not masks is None:
+                # in this case, user can choose whether to unpad the output or not
+                out = unpad_trajectories(out, masks)
         else:
             # inference mode (collection): use hidden states of last step
+            if is_namedarraytuple(self.hidden_states):
+                self.hidden_states = tuple(self.hidden_states)
             out, self.hidden_states = self.rnn(input.unsqueeze(0), self.hidden_states)
+            if isinstance(self.hidden_states, tuple):
+                self.hidden_states = LstmHiddenState(*self.hidden_states)
+            out = out.squeeze(0) # remove the time dimension
         return out
 
     def reset(self, dones=None):

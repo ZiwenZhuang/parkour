@@ -2,6 +2,7 @@ import os
 import os.path as osp
 import json
 import pickle
+import time
 
 import numpy as np
 import torch
@@ -21,12 +22,14 @@ class DemonstrationSaver:
             success_traj_only = False, # if true, the trajectory terminated no by timeout will be dumped.
             use_critic_obs= False,
             obs_disassemble_mapping= None,
+            demo_by_sample= False,
         ):
         """
         Args:
-            obs_disassemble_mapping (dict):
-                If set, the obs segment will be compressed using given type.
-                example: {"forward_depth": "normalized_image", "forward_rgb": "normalized_image"}
+            obs_disassemble_mapping (dict): If set, the obs segment will be compressed using given 
+                type. example: {"forward_depth": "normalized_image", "forward_rgb": "normalized_image"}
+            demo_by_sample (bool): # if True, the action will be sampled (policy.act) from the 
+                policy instead of using the mean (policy.act_inference).
         """
         self.env = env
         self.policy = policy
@@ -38,6 +41,7 @@ class DemonstrationSaver:
         self.use_critic_obs = use_critic_obs
         self.success_traj_only = success_traj_only
         self.obs_disassemble_mapping = obs_disassemble_mapping
+        self.demo_by_sample = demo_by_sample
         self.RolloutStorageCls = RolloutStorage
 
     def init_traj_handlers(self):
@@ -106,11 +110,19 @@ class DemonstrationSaver:
         self.policy_reset(dones)
         self.obs, self.critic_obs = n_obs, n_critic_obs
 
-    def get_transition(self):
-        if self.use_critic_obs:
+    def get_policy_actions(self):
+        if self.use_critic_obs and self.demo_by_sample:
+            actions = self.policy.act(self.critic_obs)
+        elif self.use_critic_obs:
             actions = self.policy.act_inference(self.critic_obs)
+        elif self.demo_by_sample:
+            actions = self.policy.act(self.obs)
         else:
             actions = self.policy.act_inference(self.obs)
+        return actions
+
+    def get_transition(self):
+        actions = self.get_policy_actions()
         n_obs, n_critic_obs, rewards, dones, infos = self.env.step(actions)
         return actions, rewards, dones, infos, n_obs, n_critic_obs
 
@@ -153,10 +165,16 @@ class DemonstrationSaver:
             pickle.dump(trajectory, f)
         self.dumped_traj_lengths[env_i] += step_slice.stop - step_slice.start
         self.total_timesteps += step_slice.stop - step_slice.start
-        with open(osp.join(self.save_dir, "metadata.json"), "w") as f:
+
+    def dump_metadata(self):
+        self.metadata["total_timesteps"] = self.total_timesteps.item() if isinstance(self.total_timesteps, np.int64) else self.total_timesteps
+        self.metadata["total_trajectories"] = self.total_traj_completed
+        with open(osp.join(self.save_dir, 'metadata.json'), 'w') as f:
             json.dump(self.metadata, f, indent= 4)
 
     def wrap_up_trajectory(self, env_i, step_slice):
+        # wrap up from the rollout_storage based on `step_slice`. Thus, `step_slice` must include
+        # the `done` step if exist.
         trajectory = dict(
             privileged_observations= self.rollout_storage.privileged_observations[step_slice, env_i].cpu().numpy(),
             actions= self.rollout_storage.actions[step_slice, env_i].cpu().numpy(),
@@ -224,8 +242,7 @@ class DemonstrationSaver:
                 self.dump_to_file(rollout_env_i, slice(0, self.rollout_storage.num_transitions_per_env))
             else:
                 start_idx = 0
-                di = 0
-                while di < done_idxs.shape[0]:
+                for di in range(done_idxs.shape[0]):
                     end_idx = done_idxs[di].item()
 
                     # dump and update the traj_idx for this env
@@ -233,7 +250,9 @@ class DemonstrationSaver:
                     self.update_traj_handler(rollout_env_i, slice(start_idx, end_idx+1))
 
                     start_idx = end_idx + 1
-                    di += 1
+                if start_idx < self.rollout_storage.num_transitions_per_env:
+                    self.dump_to_file(rollout_env_i, slice(start_idx, self.rollout_storage.num_transitions_per_env))
+        self.dump_metadata()
 
     def collect_and_save(self, config= None):
         """ Run the rolllout to collect the demonstration data and save it to the file """
@@ -276,6 +295,11 @@ class DemonstrationSaver:
 
     def print_log(self):
         """ print the log """
+        self.print_log_time = time.monotonic()
+        if hasattr(self, "last_print_log_time"):
+            print("time elapsed:", self.print_log_time - self.last_print_log_time)
+            print("throughput:", self.total_timesteps / (self.print_log_time - self.last_print_log_time))
+        self.last_print_log_time = self.print_log_time
         print("total_timesteps:", self.total_timesteps)
         print("total_trajectories", self.total_traj_completed)
 
@@ -292,8 +316,5 @@ class DemonstrationSaver:
                 os.rmdir(traj_dir)
         for timestep_count in self.dumped_traj_lengths:
             self.total_timesteps += timestep_count
-        self.metadata["total_timesteps"] = self.total_timesteps.item() if isinstance(self.total_timesteps, np.int64) else self.total_timesteps
-        self.metadata["total_trajectories"] = self.total_traj_completed
-        with open(osp.join(self.save_dir, 'metadata.json'), 'w') as f:
-            json.dump(self.metadata, f, indent= 4)
+        self.dump_metadata()
         print(f"Saved dataset in {self.save_dir}")

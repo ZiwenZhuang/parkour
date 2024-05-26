@@ -11,7 +11,7 @@ class A1LeapCfg( A1FieldCfg ):
     #         latency_range = [0.04-0.0025, 0.04+0.0075]
     #### uncomment the above to train non-virtual terrain
     class env(A1FieldCfg.env):
-        num_envs = 4
+        num_envs = 4096
     class terrain( A1FieldCfg.terrain ):
         max_init_terrain_level = 2
         border_size = 5
@@ -37,7 +37,7 @@ class A1LeapCfg( A1FieldCfg ):
     
     class commands( A1FieldCfg.commands ):
         class ranges( A1FieldCfg.commands.ranges ):
-            lin_vel_x = [1.0, 4.0]
+            lin_vel_x = [1.5, 3.0]
             lin_vel_y = [0.0, 0.0]
             ang_vel_yaw = [0., 0.]
 
@@ -63,11 +63,12 @@ class A1LeapCfg( A1FieldCfg ):
             tracking_ang_vel = 0.05
             world_vel_l2norm = -1.
             legs_energy_substeps = -1e-6
-            alive = 2.
+            alive = 1. # 2.
             penetrate_depth = -4e-3
             penetrate_volume = -4e-3
             exceed_dof_pos_limits = -1e-1
             exceed_torque_limits_i = -2e-1
+            lin_pos_x = 1.
             # track_predict_vel_l2norm = -1.
         soft_dof_pos_limit = 0.9
 
@@ -82,7 +83,7 @@ class A1LeapCfgPPO( A1FieldCfgPPO ):
     class algorithm( A1FieldCfgPPO.algorithm ):
         entropy_coef = 0.0
         clip_min_std = 0.2
-        lin_vel_x = [2.0, 3.0]
+        lin_vel_x = [0.5, 3.0]
         command_scale = 2.0
     
     class runner( A1FieldCfgPPO.runner ):
@@ -101,7 +102,7 @@ class A1LeapCfgPPO( A1FieldCfgPPO ):
         resume = True
         # load_run = "{Your traind walking model directory}"
         # load_run = "May16_18-12-08_WalkingBase_pEnergySubsteps2e-5_aScale0.5"
-        load_run = "High_speed_walk"
+        load_run = "Leap_2m_2500"
         # load_run = "May15_21-34-27_Skillleap_pEnergySubsteps-1e-06_virtual"#"May15_17-07-38_WalkingBase_pEnergySubsteps2e-5_aScale0.5"
         # load_run = "{Your virtually trained leap model directory}"
         max_iterations = 20000

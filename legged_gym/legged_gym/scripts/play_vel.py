@@ -106,14 +106,14 @@ def play(args):
         # "tilt",
     ]
     env_cfg.terrain.BarrierTrack_kwargs["leap"] = dict(
-            length= (1.3, 1.3),
+            length= (1.5, 1.5),
             depth= (0.4, 0.8),
             height= 0.2,
     )
     
     if "one_obstacle_per_track" in env_cfg.terrain.BarrierTrack_kwargs.keys():
         env_cfg.terrain.BarrierTrack_kwargs.pop("one_obstacle_per_track")
-    env_cfg.terrain.BarrierTrack_kwargs["n_obstacles_per_track"] = 2# 2
+    env_cfg.terrain.BarrierTrack_kwargs["n_obstacles_per_track"] = 1# 2
     env_cfg.commands.ranges.lin_vel_x = [3.0, 3.0] # [1.2, 1.2]
     env_cfg.terrain.BarrierTrack_kwargs['track_block_length']= 3.
     if "distill" in args.task:
@@ -239,11 +239,11 @@ def play(args):
         if "obs_slice" in locals().keys():
             obs_component = obs[:, obs_slice[0]].reshape(-1, *obs_slice[1])
             print(obs_component[robot_index])
-        vel_obs = torch.cat([obs[:, :9], obs[:, 12:]], dim=1)
+        vel_obs = torch.cat([obs[..., :9], obs[..., 12:]], dim=-1)
         velocity = velocity_planner(vel_obs)
-        print(velocity)
-        print(env_cfg.commands.ranges.lin_vel_x)
-        velocity = torch.clip(velocity, env_cfg.commands.ranges.lin_vel_x[0], env_cfg.commands.ranges.lin_vel_x[1])
+        env.commands[..., 0] = velocity.squeeze(-1)
+        obs[..., 9] = velocity.squeeze(-1) * env.obs_scales.lin_vel
+        # velocity = torch.clip(velocity, env_cfg.commands.ranges.lin_vel_x[0], env_cfg.commands.ranges.lin_vel_x[1])
         actions = policy(obs.detach())
         teacher_actions = actions
         obs, critic_obs, rews, dones, infos = env.step(actions.detach(), velocity)

@@ -221,6 +221,7 @@ class OnPolicyRunner:
                             'collection_time']:.3f}s, learning {locs['learn_time']:.3f}s)\n"""
                           f"""{'Value function loss:':>{pad}} {locs["losses"]['value_loss']:.4f}\n"""
                           f"""{'Surrogate loss:':>{pad}} {locs["losses"]['surrogate_loss']:.4f}\n"""
+                          f"""{'Velocity loss:':>{pad}} {locs["losses"]['vel_loss']:.4f}\n"""
                           f"""{'Mean action noise std:':>{pad}} {mean_std.item():.2f}\n"""
                         #   f"""{'Mean reward/step:':>{pad}} {locs['mean_reward']:.2f}\n"""
                         #   f"""{'Mean episode length/episode:':>{pad}} {locs['mean_trajectory_length']:.2f}\n"""
@@ -238,6 +239,7 @@ class OnPolicyRunner:
     def save(self, path, infos=None):
         run_state_dict = {
             'model_state_dict': self.alg.actor_critic.state_dict(),
+            'velocity_planner_state_dict': self.alg.velocity_planner.state_dict(),
             'optimizer_state_dict': self.alg.optimizer.state_dict(),
             'velocity_optimizer_state_dict': self.alg.velocity_optimizer.state_dict(),
             'iter': self.current_learning_iteration,
@@ -250,6 +252,8 @@ class OnPolicyRunner:
     def load(self, path, load_optimizer=True):
         loaded_dict = torch.load(path)
         self.alg.actor_critic.load_state_dict(loaded_dict['model_state_dict'])
+        if 'velocity_planner_state_dict' in loaded_dict:
+            self.alg.velocity_planner.load_state_dict(loaded_dict['velocity_planner_state_dict'])
         if load_optimizer and "optimizer_state_dict" in loaded_dict:
             self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict'], )
         if load_optimizer and "velocity_optimizer_state_dict" in loaded_dict:

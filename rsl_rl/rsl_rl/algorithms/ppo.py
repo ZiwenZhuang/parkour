@@ -32,6 +32,7 @@ from collections import defaultdict
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
 import copy
 
 from rsl_rl.modules import ActorCritic
@@ -99,9 +100,11 @@ class PPO:
 
     def test_mode(self):
         self.actor_critic.test()
+        self.velocity_planner.eval()
     
     def train_mode(self):
         self.actor_critic.train()
+        self.velocity_planner.train()
 
     def act(self, obs, critic_obs):
         if self.actor_critic.is_recurrent:
@@ -109,10 +112,10 @@ class PPO:
         # Compute the actions and values
         vel_obs = torch.cat([obs[..., :9], obs[..., 12:]], dim=-1)
         velocity = self.velocity_planner(vel_obs)
-        if self.lin_vel_x is not None:
-            velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
-        velocity *= self.command_scale
-        self.transition.actions = self.actor_critic.act(obs, velocity=velocity)[0].detach()
+        # if self.lin_vel_x is not None:
+        #     velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
+        self.transition.actions = self.actor_critic.act(obs, velocity=velocity * self.command_scale)[0].detach()
+        critic_obs[..., 9] = velocity.squeeze(-1) * self.command_scale
         self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.actor_critic.action_mean.detach()
@@ -148,7 +151,7 @@ class PPO:
             generator = self.storage.mini_batch_generator(self.num_mini_batches, self.num_learning_epochs)
         for minibatch in generator:
 
-                losses, _, stats = self.compute_losses(minibatch)
+                losses, _, stats = self.compute_losses(minibatch, current_learning_iteration=current_learning_iteration)
 
                 loss = 0.
                 for k, v in losses.items():
@@ -177,15 +180,15 @@ class PPO:
 
         return mean_losses, average_stats
 
-    def compute_losses(self, minibatch):
+    def compute_losses(self, minibatch, current_learning_iteration=None):
         obs = copy.deepcopy(minibatch.obs)
-        # print(obs.shape)
+
         vel_obs = torch.cat([obs[..., :9], obs[..., 12:]], dim=-1)
-        # print(vel_obs.shape)
+
         velocity = self.velocity_planner(vel_obs)
-        if self.lin_vel_x is not None:
-            velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
-        self.actor_critic.act(obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[0], velocity=velocity)
+        # if self.lin_vel_x is not None:
+        #     velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
+        self.actor_critic.act(obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[0], velocity=velocity * self.command_scale)
         actions_log_prob_batch = self.actor_critic.get_actions_log_prob(minibatch.actions)
         value_batch = self.actor_critic.evaluate(obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[1])
         mu_batch = self.actor_critic.action_mean
@@ -228,9 +231,17 @@ class PPO:
         else:
             value_loss = (minibatch.returns - value_batch).pow(2).mean()
         
+        # Velocity loss
+        if current_learning_iteration is None:
+            vel_loss = 0
+        else:
+            vel_loss = torch.square(velocity-2).mean() * np.exp(-0.01 * current_learning_iteration + 125)
+            vel_loss += torch.square(torch.clamp_max(velocity, 1.) - 1).mean()
+
         return_ = dict(
             surrogate_loss= surrogate_loss,
             value_loss= value_loss,
+            vel_loss = vel_loss
         )
         if entropy_batch is not None:
             return_["entropy"] = - entropy_batch.mean()

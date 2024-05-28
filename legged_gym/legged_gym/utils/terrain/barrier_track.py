@@ -479,16 +479,31 @@ class BarrierTrack:
         # adding trimesh and heighfields
         if "one_obstacle_per_track" in self.track_kwargs.keys():
             print("Warning: one_obstacle_per_track is deprecated, use n_obstacles_per_track instead.")
-        if self.track_kwargs["randomize_obstacle_order"] and len(self.track_kwargs["options"]) > 0:
-            obstacle_order = np.random.choice(
-                len(self.track_kwargs["options"]),
-                size= self.track_kwargs.get("n_obstacles_per_track", 1),
-                replace= True,
-            )
-        else:
-            obstacle_order = np.arange(len(self.track_kwargs["options"]))
+        
         difficulties = self.get_difficulty(row_idx, col_idx)
         difficulty, virtual_track = difficulties[:2]
+        n_obstacles_curriculum = self.track_kwargs.get("n_obstacles_curriculum", False)
+        if n_obstacles_curriculum:    
+            # n_obstacles_per_track = min(int(difficulty * self.track_kwargs.get("n_obstacles_per_track", 1)) + 1, self.track_kwargs.get("n_obstacles_per_track", 1))
+            n_obstacles_per_track = self.track_kwargs.get("n_obstacles_per_track", 1)
+            obstacle_order = np.random.choice(
+                len(self.track_kwargs["options"]),
+                size= n_obstacles_per_track,
+                replace= True,
+            )
+            # if difficulty > 0.5:
+            #     difficulty = (difficulty - 0.2) / 0.8
+            # else:
+            #     difficulty *= 2
+        else:
+            if self.track_kwargs["randomize_obstacle_order"] and len(self.track_kwargs["options"]) > 0:
+                obstacle_order = np.random.choice(
+                    len(self.track_kwargs["options"]),
+                    size= self.track_kwargs.get("n_obstacles_per_track", 1),
+                    replace= True,
+                )
+            else:
+                obstacle_order = np.arange(len(self.track_kwargs["options"]))
 
         if self.track_kwargs["add_perlin_noise"]:
             TerrainPerlin_kwargs = self.cfg.TerrainPerlin_kwargs

@@ -1038,7 +1038,7 @@ class LeggedRobotField(LeggedRobot):
         return (1 - torch.exp(-world_vel_error/self.cfg.rewards.tracking_sigma)) * engaging_mask # reverse version of tracking reward
 
     def _reward_lin_pos_x(self):
-        return torch.abs((self.root_states[:, :3] - self.env_origins)[:, 0])
+        return (self.root_states[:, :3] - self.last_root_pos)[:, 0]
     
     ##### Some helper functions that override parent class attributes #####
     @property

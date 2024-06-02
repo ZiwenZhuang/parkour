@@ -78,7 +78,7 @@ class OnPolicyRunner:
         self.save_interval = self.cfg["save_interval"]
 
         # init storage and model
-        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs], [self.env.num_privileged_obs], [self.env.num_actions])
+        self.alg.init_storage(self.env.num_envs, self.num_steps_per_env, [self.env.num_obs - 3], [self.env.num_privileged_obs], [self.env.num_actions])
 
         # Log
         self.log_dir = log_dir
@@ -251,11 +251,22 @@ class OnPolicyRunner:
 
     def load(self, path, load_optimizer=True):
         loaded_dict = torch.load(path)
-        self.alg.actor_critic.load_state_dict(loaded_dict['model_state_dict'])
+
+        try:
+            self.alg.actor_critic.load_state_dict(loaded_dict['model_state_dict'], strict=False)
+            if load_optimizer and "optimizer_state_dict" in loaded_dict:
+                self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict'], )
+        except:
+            from collections import OrderedDict
+            new_state = OrderedDict()
+            for k, v in loaded_dict['model_state_dict'].items():
+                if "memory_c" in k or "critic" in k:
+                    continue
+                new_state[k] = v
+            self.alg.actor_critic.load_state_dict(new_state, strict=False)
+
         if 'velocity_planner_state_dict' in loaded_dict:
             self.alg.velocity_planner.load_state_dict(loaded_dict['velocity_planner_state_dict'])
-        if load_optimizer and "optimizer_state_dict" in loaded_dict:
-            self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict'], )
         if load_optimizer and "velocity_optimizer_state_dict" in loaded_dict:
             self.alg.velocity_optimizer.load_state_dict(loaded_dict['velocity_optimizer_state_dict'], )
         if "lr_scheduler_state_dict" in loaded_dict:

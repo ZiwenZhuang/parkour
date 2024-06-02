@@ -30,7 +30,6 @@ class A1LeapCfg( A1FieldCfg ):
             virtual_terrain= True, # Change this to False for real terrain
             no_perlin_threshold= 0.06,
             n_obstacles_curriculum = True,
-            n_obstacles_per_track=2,
         ))
 
         TerrainPerlin_kwargs = merge_dict(A1FieldCfg.terrain.TerrainPerlin_kwargs, dict(
@@ -82,6 +81,9 @@ class A1LeapCfg( A1FieldCfg ):
 
 
 class A1LeapCfgPPO( A1FieldCfgPPO ):
+    class policy(A1FieldCfgPPO.policy):
+        num_critic_obs = 78
+    
     class algorithm( A1FieldCfgPPO.algorithm ):
         entropy_coef = 0.0
         clip_min_std = 0.2
@@ -104,7 +106,8 @@ class A1LeapCfgPPO( A1FieldCfgPPO ):
         resume = True
         # load_run = "{Your traind walking model directory}"
         # load_run = "May16_18-12-08_WalkingBase_pEnergySubsteps2e-5_aScale0.5"
-        load_run = "Leap_loss_success"
+        # load_run = "Leap_loss_success"
+        load_run = 'High_speed_walk'
         # load_run = "May15_21-34-27_Skillleap_pEnergySubsteps-1e-06_virtual"#"May15_17-07-38_WalkingBase_pEnergySubsteps2e-5_aScale0.5"
         # load_run = "{Your virtually trained leap model directory}"
         max_iterations = 20000

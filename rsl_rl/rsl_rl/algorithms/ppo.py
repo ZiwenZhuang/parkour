@@ -115,14 +115,14 @@ class PPO:
         # if self.lin_vel_x is not None:
         #     velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
         self.transition.actions = self.actor_critic.act(obs, velocity=velocity * self.command_scale)[0].detach()
-        critic_obs[..., 9] = velocity.squeeze(-1) * self.command_scale
-        self.transition.values = self.actor_critic.evaluate(critic_obs).detach()
+        # critic_obs[..., 9] = velocity.squeeze(-1) * self.command_scale
+        self.transition.values = self.actor_critic.evaluate(vel_obs).detach()
         self.transition.actions_log_prob = self.actor_critic.get_actions_log_prob(self.transition.actions).detach()
         self.transition.action_mean = self.actor_critic.action_mean.detach()
         self.transition.action_sigma = self.actor_critic.action_std.detach()
         # need to record obs and critic_obs before env.step()
-        self.transition.observations = obs
-        self.transition.critic_observations = critic_obs
+        self.transition.observations = vel_obs
+        self.transition.critic_observations = vel_obs
         return self.transition.actions, velocity.squeeze().detach()
     
     def process_env_step(self, rewards, dones, infos):
@@ -138,6 +138,7 @@ class PPO:
         self.actor_critic.reset(dones)
     
     def compute_returns(self, last_critic_obs):
+        last_critic_obs = torch.cat([last_critic_obs[..., :9], last_critic_obs[..., 12:]], dim=-1)
         last_values= self.actor_critic.evaluate(last_critic_obs).detach()
         self.storage.compute_returns(last_values, self.gamma, self.lam)
 
@@ -183,12 +184,14 @@ class PPO:
     def compute_losses(self, minibatch, current_learning_iteration=None):
         obs = copy.deepcopy(minibatch.obs)
 
-        vel_obs = torch.cat([obs[..., :9], obs[..., 12:]], dim=-1)
+        # vel_obs = torch.cat([obs[..., :9], obs[..., 12:]], dim=-1)
 
-        velocity = self.velocity_planner(vel_obs)
+        velocity = self.velocity_planner(obs)
+        zeros = torch.zeros_like(velocity, requires_grad=False)
+        obs_with_cmd = torch.cat([obs[..., :9], velocity, zeros, zeros, obs[..., 9:]], dim=-1)
         # if self.lin_vel_x is not None:
         #     velocity = torch.clip(velocity, self.lin_vel_x[0], self.lin_vel_x[1])
-        self.actor_critic.act(obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[0], velocity=velocity * self.command_scale)
+        self.actor_critic.act(obs_with_cmd, masks=minibatch.masks, hidden_states=minibatch.hid_states[0], velocity=velocity * self.command_scale)
         actions_log_prob_batch = self.actor_critic.get_actions_log_prob(minibatch.actions)
         value_batch = self.actor_critic.evaluate(obs, masks=minibatch.masks, hidden_states=minibatch.hid_states[1])
         mu_batch = self.actor_critic.action_mean

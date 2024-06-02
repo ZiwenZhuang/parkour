@@ -66,6 +66,7 @@ class BarrierTrack:
         "jump": 3,
         "leap": 4,
      } # track_id are aranged in this order
+    
     def __init__(self, cfg, num_robots: int) -> None:
         self.cfg = cfg
         self.num_robots = num_robots

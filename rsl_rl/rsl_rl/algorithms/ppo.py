@@ -238,7 +238,7 @@ class PPO:
         if current_learning_iteration is None:
             vel_loss = 0
         else:
-            vel_loss = torch.square(velocity-2).mean() * np.exp(-0.01 * current_learning_iteration + 165)
+            vel_loss = torch.square(velocity-2).mean() * np.exp(-0.001 * current_learning_iteration + 12)
             vel_loss += torch.square(torch.clamp_max(velocity, 1.) - 1).mean()
 
         return_ = dict(

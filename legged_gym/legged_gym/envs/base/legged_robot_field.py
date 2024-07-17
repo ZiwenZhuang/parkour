@@ -14,10 +14,6 @@ class LeggedRobotField(LeggedRobot):
     """ NOTE: Most of this class implementation does not depend on the terrain. Check where
     `check_BarrierTrack_terrain` is called to remove the dependency of BarrierTrack terrain.
     """
-    def __init__(self, cfg: LeggedRobotCfg, sim_params, physics_engine, sim_device, headless):
-        print("Using LeggedRobotField.__init__, num_obs and num_privileged_obs will be computed instead of assigned.")
-        cfg.terrain.measure_heights = True # force height measurement that have full obs from parent class implementation.
-        super().__init__(cfg, sim_params, physics_engine, sim_device, headless)
     
     ##### adds-on with sensors #####
     def _create_sensors(self, env_handle=None, actor_handle= None):

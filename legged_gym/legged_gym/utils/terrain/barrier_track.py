@@ -1515,7 +1515,7 @@ class BarrierTrack:
         block_idx = torch.floor(forward_distance / self.env_block_length).to(int) # (n,)
         block_idx_clipped = torch.clip(
             block_idx,
-            0.,
+            0,
             (self.n_blocks_per_track - 1),
         )
         
@@ -1680,7 +1680,7 @@ class BarrierTrack:
             dim= -1,
         )
         if mask_only:
-            return distance_to_edge < self.track_kwargs["stairsup"].get("residual_distance", 0.05)
+            return (distance_to_edge < self.track_kwargs["stairsup"].get("residual_distance", 0.05)).to(torch.float32)
         else:
             return torch.clip(
                 self.track_kwargs["stairsup"].get("residual_distance", 0.05) - distance_to_edge,

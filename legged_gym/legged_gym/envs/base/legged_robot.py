@@ -700,6 +700,7 @@ class LeggedRobot(BaseTask):
         Returns:
             [torch.Tensor]: Torques sent to the simulation
         """
+        actions = self.motor_strength * actions
         #pd controller
         if isinstance(self.cfg.control.action_scale, (tuple, list)):
             self.cfg.control.action_scale = torch.tensor(self.cfg.control.action_scale, device= self.sim_device)

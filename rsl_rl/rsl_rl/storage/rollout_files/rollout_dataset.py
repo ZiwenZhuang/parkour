@@ -126,6 +126,8 @@ class RolloutDataset(RolloutFileBase):
         self.traj_datas = [None for _ in range(self.num_envs)]
         self.traj_cursors = np.zeros(self.num_envs, dtype= int)
 
+        self.refresh_handlers()
+
     def _refresh_traj_data(self, env_idx):
         """ refresh `self.traj_data` based on current traj_file_idxs[env_idx]. usually called
         after refreshing traj_handler or updated traj_file_idxs[env_idx]
@@ -225,7 +227,7 @@ class RolloutDataset(RolloutFileBase):
             )
             dones = torch.empty(
                 leading_dims,
-                dtype= self.traj_datas[0]["dones"].dtype,
+                dtype= bool,
                 device= self.device,
             )
             timeouts = torch.empty(

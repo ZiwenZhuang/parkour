@@ -103,6 +103,7 @@ def play(args):
             "wave",
         ]
         env_cfg.terrain.BarrierTrack_kwargs["leap"]["fake_offset"] = 0.1
+        env_cfg.terrain.BarrierTrack_kwargs["draw_virtual_terrain"] = True
     else:
         env_cfg.env.num_envs = min(env_cfg.env.num_envs, 1)
         env_cfg.env.episode_length_s = 60
@@ -131,7 +132,7 @@ def play(args):
     env_cfg.viewer.draw_sensors = False
     if hasattr(env_cfg.terrain, "BarrierTrack_kwargs"):
         env_cfg.terrain.BarrierTrack_kwargs["draw_virtual_terrain"] = True
-    # train_cfg.runner.resume = (args.load_run is not None)
+    train_cfg.runner.resume = (args.load_run is not None)
     train_cfg.runner_class_name = "OnPolicyRunner"
     
     if args.no_throw:
@@ -196,6 +197,8 @@ def play(args):
     )
     agent_model = ppo_runner.alg.actor_critic
     policy = ppo_runner.get_inference_policy(device=env.device)
+    if args.sample:
+        policy = agent_model.act
     ### get obs_slice to read the obs
     # obs_slice = get_obs_slice(env.obs_segments, "engaging_block")
     
@@ -205,7 +208,6 @@ def play(args):
         export_policy_as_jit(ppo_runner.alg.actor_critic, path)
         print('Exported policy as jit script to: ', path)
     if RECORD_FRAMES:
-        os.mkdir(os.path.join(LEGGED_GYM_ROOT_DIR, "logs", "images"), exist_ok= True)
         transform = gymapi.Transform()
         transform.p = gymapi.Vec3(*env_cfg.viewer.pos)
         transform.r = gymapi.Quat.from_euler_zyx(0., 0., -np.pi/2)
@@ -214,6 +216,8 @@ def play(args):
             env.envs[0],
             transform= transform,
         )
+        if not os.path.exists(os.path.join(LEGGED_GYM_ROOT_DIR, "logs", args.frames_dir)):
+            os.makedirs(os.path.join(LEGGED_GYM_ROOT_DIR, "logs", args.frames_dir))
 
     logger = Logger(env.dt)
     robot_index = 0 # which robot is used for logging

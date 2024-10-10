@@ -405,14 +405,14 @@ def play(args):
         # if (abs(env.substep_torques[robot_index]) > 35.).any():
             # exceed_idxs = torch.where(abs(env.substep_torques[robot_index]) > 35.)
             # print("substep_torques:", exceed_idxs[1], env.substep_torques[robot_index][exceed_idxs[0], exceed_idxs[1]])
-        if env.torque_exceed_count_envstep[robot_index].any():
-            print("substep torque exceed limit ratio", 
-                (torch.abs(env.substep_torques[robot_index]) / (env.torque_limits.unsqueeze(0))).max(),
-                "joint index",
-                torch.where((torch.abs(env.substep_torques[robot_index]) > env.torque_limits.unsqueeze(0) * env.cfg.rewards.soft_torque_limit).any(dim= 0))[0],
-                "timestep", i,
-            )
-            env.torque_exceed_count_envstep[robot_index] = 0
+        # if env.torque_exceed_count_envstep[robot_index].any():
+        #     print("substep torque exceed limit ratio", 
+        #         (torch.abs(env.substep_torques[robot_index]) / (env.torque_limits.unsqueeze(0))).max(),
+        #         "joint index",
+        #         torch.where((torch.abs(env.substep_torques[robot_index]) > env.torque_limits.unsqueeze(0) * env.cfg.rewards.soft_torque_limit).any(dim= 0))[0],
+        #         "timestep", i,
+        #     )
+        #     env.torque_exceed_count_envstep[robot_index] = 0
         # if (torch.abs(env.torques[robot_index]) > env.torque_limits.unsqueeze(0) * env.cfg.rewards.soft_torque_limit).any():
         #     print("torque exceed limit ratio",
         #         (torch.abs(env.torques[robot_index]) / (env.torque_limits.unsqueeze(0))).max(),

@@ -4,6 +4,7 @@ from collections import OrderedDict
 import torch
 from datetime import datetime
 import numpy as np
+np.float = float
 import os
 import json
 import os.path as osp

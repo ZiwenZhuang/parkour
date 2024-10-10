@@ -69,7 +69,7 @@ class Go1FieldDistillCfg( Go1FieldCfg ):
             # for go1, usb2.0, 480x640, d435i camera
             latency_range = [0.25, 0.30] # [s]
             # latency_range = [0.28, 0.36] # [s]
-            latency_resample_time = 5.0 # [s]
+            latency_resampling_time = 5.0 # [s]
             refresh_duration = 1/10 # [s] for (240, 424 option with onboard script fixed to no more than 20Hz)
             
             # config to simulate stero RGBD camera

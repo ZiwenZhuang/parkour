@@ -37,6 +37,9 @@ class Go2DistillCfg( Go2FieldCfg ):
         if multi_process_:
             num_rows = 4
             num_cols = 1
+        else:
+            num_rows = 10
+            num_cols = 20
         curriculum = False
 
         BarrierTrack_kwargs = merge_dict(Go2FieldCfg.terrain.BarrierTrack_kwargs, dict(
@@ -69,7 +72,7 @@ class Go2DistillCfg( Go2FieldCfg ):
             depth_range = [0.0, 3.0]
 
             latency_range = [0.08, 0.142]
-            latency_resample_time = 5.0
+            latency_resampling_time = 5.0
             refresh_duration = 1/10 # [s]
 
     class commands( Go2FieldCfg.commands ):

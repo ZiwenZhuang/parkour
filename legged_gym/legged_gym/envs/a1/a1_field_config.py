@@ -42,7 +42,7 @@ class A1FieldCfg( A1RoughCfg ):
         class proprioception:
             delay_action_obs = False
             latency_range = [0.0, 0.0]
-            latency_resample_time = 2.0 # [s]
+            latency_resampling_time = 2.0 # [s]
     
     class terrain( A1RoughCfg.terrain ):
         mesh_type = "trimesh" # Don't change
@@ -126,7 +126,7 @@ class A1FieldCfg( A1RoughCfg ):
         motor_clip_torque = False
         # action_delay = False # set to True to enable action delay in sim
         # action_delay_range = [0.002, 0.022] # [s]
-        # action_delay_resample_time = 5.0 # [s]
+        # action_delay_resampling_time = 5.0 # [s]
 
     class asset( A1RoughCfg.asset ):
         penalize_contacts_on = ["base", "thigh", "calf"]

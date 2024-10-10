@@ -42,7 +42,7 @@ class Go2RoughCfg( LeggedRobotCfg ):
         class proprioception:
             obs_components = ["ang_vel", "projected_gravity", "commands", "dof_pos", "dof_vel"]
             latency_range = [0.005, 0.045] # [s]
-            latency_resample_time = 5.0 # [s]
+            latency_resampling_time = 5.0 # [s]
 
     class terrain:
         selected = "TerrainPerlin"

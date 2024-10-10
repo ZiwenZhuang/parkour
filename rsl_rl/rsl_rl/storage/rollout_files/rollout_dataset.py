@@ -118,7 +118,7 @@ class RolloutDataset(RolloutFileBase):
             print("RolloutDataset: trajectory not enough, need {} at least, waiting for 15 minutes...".format(self.keep_latest_n_trajs))
             time.sleep(60 * 15)
         # use trajectory index to identify the trajectory in all_available_trajectory_dirs
-        self.traj_identifiers = self.unused_trajectory_idxs[:self.num_envs]
+        self.traj_identifiers = [None] * self.num_envs
         self.unused_trajectory_idxs = [i for i in self.unused_trajectory_idxs if i not in self.traj_identifiers]
         self.traj_file_names = [[] for _ in range(self.num_envs)]
         self.traj_lengths = [None for _ in range(self.num_envs)]

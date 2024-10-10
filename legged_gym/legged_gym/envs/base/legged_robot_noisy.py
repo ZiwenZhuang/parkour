@@ -96,7 +96,7 @@ class LeggedRobotNoisyMixin:
         self.torque_exceed_count_substep[(torch.abs(self.torques) > self.torque_limits * self.cfg.rewards.soft_torque_limit).any(dim= -1)] += 1
         
         ### count how many times in the episode the robot is out of dof pos limit (summing all dofs)
-        self.out_of_dof_pos_limit_count_substep += self._reward_dof_pos_limits().int()
+        self.out_of_dof_pos_limit_count_substep += (self._reward_dof_pos_limits() > 0).int()
         ### or using a1_const.h value to check whether the robot is out of dof pos limit
         # joint_pos_limit_high = torch.tensor([0.802, 4.19, -0.916] * 4, device= self.device) - 0.001
         # joint_pos_limit_low = torch.tensor([-0.802, -1.05, -2.7] * 4, device= self.device) + 0.001
@@ -139,7 +139,7 @@ class LeggedRobotNoisyMixin:
         all_obs_components = self.all_obs_components
 
         if getattr(self.cfg.control, "action_delay", False):
-            assert hasattr(self.cfg.control, "action_delay_range") and hasattr(self.cfg.control, "action_delay_resample_time"), "Please specify action_delay_range and action_delay_resample_time in the config file."
+            assert hasattr(self.cfg.control, "action_delay_range") and hasattr(self.cfg.control, "action_delay_resampling_time"), "Please specify action_delay_range and action_delay_resampling_time in the config file."
             self.build_action_delay_buffer()
 
         self.component_governed_by_sensor = dict()
@@ -177,7 +177,6 @@ class LeggedRobotNoisyMixin:
                 (self.num_envs, 1),
                 device= self.device,
             ).flatten()
-        self.action_delayed_frames = ((self.action_delay_buffer / self.dt) + 1).to(int)
 
     def build_depth_image_processor_buffers(self, sensor_name):
         assert sensor_name == "forward_camera", "Only forward_camera is supported for now."
@@ -268,7 +267,7 @@ class LeggedRobotNoisyMixin:
         return_ = super()._reset_buffers(env_ids)
         if hasattr(self, "actions_history_buffer"):
             self.actions_history_buffer[:, env_ids] = 0.
-            self.action_delayed_frames[env_ids] = self.cfg.control.action_history_buffer_length
+            self._resample_action_delay(env_ids)
         for sensor_name in self.available_sensors:
             if not hasattr(self.cfg.sensor, sensor_name):
                 continue
@@ -757,7 +756,7 @@ class LeggedRobotNoisyMixin:
                 -self.forward_camera_delayed_frames,
                 torch.arange(self.num_envs, device= self.device),
             ].clone()
-            self.forward_depth_refreshed = True
+            self.forward_depth_obs_refreshed = True
         if not hasattr(self.cfg.sensor, "forward_camera") or privileged:
             return super()._get_forward_depth_obs(privileged).reshape(self.num_envs, -1)
 

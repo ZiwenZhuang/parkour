@@ -35,6 +35,8 @@ To deploy the trained model on your unitree Go2 robot, please follow the instruc
 ## Trouble Shooting ##
 If you cannot run the distillation part or all graphics computing goes to GPU 0 dispite you have multiple GPUs and have set the CUDA_VISIBLE_DEVICES, please use docker to isolate each GPU.
 
+NOTE: When playing the distilled policy in simulation, DO remember to set `ckpt_manipulator = None` when configuring the runner. Please refer to [#82](https://github.com/ZiwenZhuang/parkour/issues/82) for more detail.
+
 ## To Do ##
 - [x] Go1 training configuration (does not guarantee the same performance as the paper)
 - [ ] A1 deployment code
